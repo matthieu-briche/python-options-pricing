@@ -1,5 +1,5 @@
 """
-Validation du backtest de couverture (couverture.simuler_couverture), d'après
+Validation du backtest de couverture (hedging.simulate_hedging), d'après
 Bouchard & Chassagneux, ch. 7.3 et 5.2.1.
 
   1. Modèle juste : P&L moyen nul. Sous la mesure risque-neutre, c'est exact même
@@ -15,23 +15,23 @@ Bouchard & Chassagneux, ch. 7.3 et 5.2.1.
      réalisée et l'erreur de discrétisation s'effondre.
   6. La dérive réelle μ ne change pas la dispersion du P&L.
 
-Usage : python valider_couverture.py        (≈ 1 à 2 min)
-Sorties : console + couverture.png
+Usage : python validate_hedging.py        (≈ 1 à 2 min)
+Sorties : console + hedging.png
 """
 import time
 
 import numpy as np
 
-from couverture import OptionCouverture, ecart_type_theorique, simuler_couverture
+from hedging import HedgedOption, theoretical_std, simulate_hedging
 from pricer import BlackScholes, bs_price
-from valider_pricer import Bilan
+from validate_pricer import Report
 
 S0, R = 100.0, 0.03
 NP = 50_000
 
 
 def main():
-    bilan, t0 = Bilan(), time.time()
+    bilan, t0 = Report(), time.time()
     graph = {}
 
     # 1. Modèle juste : moyenne nulle
@@ -40,7 +40,7 @@ def main():
         for K in (90, 100, 110):
             for q in (0.0, 0.02):
                 m = BlackScholes(S0, R, 0.25, q)
-                res = simuler_couverture(m, K, 0.5, kind, n_reb=52, n_paths=NP, seed=K)
+                res = simulate_hedging(m, K, 0.5, kind, n_reb=52, n_paths=NP, seed=K)
                 bilan.check(sec, f"{kind} K={K} q={q}", abs(res.moyenne) <= 3.5 * res.erreur_type,
                             f"moyenne={res.moyenne:+.4f} ± {res.erreur_type:.4f}")
 
@@ -51,9 +51,9 @@ def main():
     et, th = [], []
     print("\n   Call ATM 6 mois, vol 20 % — écart-type du P&L :")
     for n in Ns:
-        res = simuler_couverture(m, K, T, n_reb=n, n_paths=NP, seed=n)
+        res = simulate_hedging(m, K, T, n_reb=n, n_paths=NP, seed=n)
         et.append(res.ecart_type)
-        th.append(ecart_type_theorique(m, K, T, n_reb=n))
+        th.append(theoretical_std(m, K, T, n_reb=n))
         print(f"     N={n:4d}  simulé {et[-1]:.4f}   théorique {th[-1]:.4f}   "
               f"ratio {et[-1] / th[-1]:.3f}   ({et[-1] / res.prime:.1%} de la prime)")
         bilan.check(sec, f"Simulé ≈ théorique (N={n})", 0.95 <= et[-1] / th[-1] <= 1.08,
@@ -69,7 +69,7 @@ def main():
     for sig_c in (0.15, 0.25):
         for kind in ("call", "put"):
             m = BlackScholes(S0, R, sig_c)
-            res = simuler_couverture(m, 100, 0.5, kind, n_reb=500, n_paths=20_000,
+            res = simulate_hedging(m, 100, 0.5, kind, n_reb=500, n_paths=20_000,
                                      sigma_reelle=sig_vraie, seed=7)
             nom = f"{kind} σ̃={sig_c} σ={sig_vraie}"
             exact = float(bs_price(m, 100, 0.5, kind)
@@ -81,7 +81,7 @@ def main():
             bilan.check(sec, f"Signe : {'gain' if sig_c > sig_vraie else 'perte'} ({nom})", signe_ok)
             # L'écart P&L − formule est l'erreur de discrétisation : il doit
             # décroître en 1/√N (×4 rebalancements -> écart-type ÷2).
-            res4 = simuler_couverture(m, 100, 0.5, kind, n_reb=125, n_paths=20_000,
+            res4 = simulate_hedging(m, 100, 0.5, kind, n_reb=125, n_paths=20_000,
                                       sigma_reelle=sig_vraie, seed=7)
             e500 = np.std(res.pnl - res.erreur_vol)
             e125 = np.std(res4.pnl - res4.erreur_vol)
@@ -98,12 +98,12 @@ def main():
     rng = np.random.default_rng(1)
     sig_r = rng.uniform(0.10, 0.30, 20_000)
     for kind in ("call", "put"):
-        hi = simuler_couverture(BlackScholes(S0, R, 0.30), 100, 0.5, kind, n_reb=500,
+        hi = simulate_hedging(BlackScholes(S0, R, 0.30), 100, 0.5, kind, n_reb=500,
                                 n_paths=20_000, sigma_reelle=sig_r, seed=3)
-        lo = simuler_couverture(BlackScholes(S0, R, 0.10), 100, 0.5, kind, n_reb=500,
+        lo = simulate_hedging(BlackScholes(S0, R, 0.10), 100, 0.5, kind, n_reb=500,
                                 n_paths=20_000, sigma_reelle=sig_r, seed=3)
         # bruit de discrétisation à N=500 : ~1er ordre à la vol la plus forte
-        bruit = ecart_type_theorique(BlackScholes(S0, R, 0.30), 100, 0.5, n_reb=500)
+        bruit = theoretical_std(BlackScholes(S0, R, 0.30), 100, 0.5, n_reb=500)
         bilan.check(sec, f"σ̃=σ_max : terme de vol >= 0 partout ({kind})", hi.erreur_vol.min() >= 0)
         bilan.check(sec, f"σ̃=σ_max : P&L >= −3 × bruit de discrétisation ({kind})",
                     np.quantile(hi.pnl, 0.001) >= -3 * bruit,
@@ -116,9 +116,9 @@ def main():
     sec = "5. Couverture gamma-neutre"
     m = BlackScholes(S0, R, 0.20)
     sig_r = np.random.default_rng(2).uniform(0.15, 0.25, NP)
-    G = OptionCouverture(K=100, T=1.0)
-    d_only = simuler_couverture(m, 100, 0.5, n_reb=52, n_paths=NP, sigma_reelle=sig_r, seed=4)
-    g_neut = simuler_couverture(m, 100, 0.5, n_reb=52, n_paths=NP, sigma_reelle=sig_r, seed=4,
+    G = HedgedOption(K=100, T=1.0)
+    d_only = simulate_hedging(m, 100, 0.5, n_reb=52, n_paths=NP, sigma_reelle=sig_r, seed=4)
+    g_neut = simulate_hedging(m, 100, 0.5, n_reb=52, n_paths=NP, sigma_reelle=sig_r, seed=4,
                                 couverture_gamma=G)
     ratio = g_neut.ecart_type / d_only.ecart_type
     print(f"\n   Vol réalisée ∈ [15 %, 25 %], couverte à 20 %, N=52 :")
@@ -127,8 +127,8 @@ def main():
     bilan.check(sec, "Vol incertaine : écart-type divisé par > 3", ratio < 1 / 3, f"ratio={ratio:.3f}")
     bilan.check(sec, "Terme de vol quasi nul", np.abs(g_neut.erreur_vol).max() < 1e-8,
                 f"max={np.abs(g_neut.erreur_vol).max():.2e}")
-    a = simuler_couverture(m, 100, 0.5, n_reb=52, n_paths=NP, seed=5)
-    b = simuler_couverture(m, 100, 0.5, n_reb=52, n_paths=NP, seed=5, couverture_gamma=G)
+    a = simulate_hedging(m, 100, 0.5, n_reb=52, n_paths=NP, seed=5)
+    b = simulate_hedging(m, 100, 0.5, n_reb=52, n_paths=NP, seed=5, couverture_gamma=G)
     bilan.check(sec, "Modèle juste : erreur de discrétisation divisée par > 3",
                 b.ecart_type < a.ecart_type / 3, f"{a.ecart_type:.4f} -> {b.ecart_type:.4f}")
     bilan.check(sec, "P&L moyen nul (gamma-neutre)", abs(b.moyenne) <= 3.5 * b.erreur_type,
@@ -138,10 +138,10 @@ def main():
     # 6. Dérive réelle
     sec = "6. Indépendance à la dérive réelle μ"
     m = BlackScholes(S0, R, 0.20)
-    base = simuler_couverture(m, 100, 0.5, n_reb=52, n_paths=NP, seed=6)
+    base = simulate_hedging(m, 100, 0.5, n_reb=52, n_paths=NP, seed=6)
     for mu in (-0.10, 0.15, 0.30):
-        res = simuler_couverture(m, 100, 0.5, n_reb=52, n_paths=NP, seed=6, mu=mu)
-        th_mu = ecart_type_theorique(m, 100, 0.5, n_reb=52, mu=mu)
+        res = simulate_hedging(m, 100, 0.5, n_reb=52, n_paths=NP, seed=6, mu=mu)
+        th_mu = theoretical_std(m, 100, 0.5, n_reb=52, mu=mu)
         bilan.check(sec, f"μ={mu:+.2f} : écart-type ≈ 1er ordre théorique",
                     0.95 <= res.ecart_type / th_mu <= 1.08,
                     f"simulé={res.ecart_type:.4f} théorique={th_mu:.4f} (μ=r : {base.ecart_type:.4f})")
@@ -150,11 +150,11 @@ def main():
 
     print(f"\n   Durée : {time.time() - t0:.0f}s")
     ko = bilan.afficher()
-    print(f"Graphique : {tracer(graph)}")
+    print(f"Graphique : {plot_results(graph)}")
     return ko
 
 
-def tracer(g):
+def plot_results(g):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -209,7 +209,7 @@ def tracer(g):
     fig.suptitle("Backtest de couverture : vente d'un call ATM 6 mois", x=0.01, ha="left",
                  fontsize=12, color=INK, y=1.02)
     fig.tight_layout()
-    chemin = "couverture.png"
+    chemin = "hedging.png"
     fig.savefig(chemin, dpi=150, bbox_inches="tight", facecolor=SURF)
     return chemin
 

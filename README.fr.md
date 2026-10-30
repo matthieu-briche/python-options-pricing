@@ -114,7 +114,7 @@ Une seule simulation donne le prix **et** les 5 Grecques (2 M de trajectoires) :
 
 ### Smile de volatilité sur données de marché
 
-`valider_marche.py` inverse le pricer américain (dividendes discrets) sur chaque
+`validate_market.py` inverse le pricer américain (dividendes discrets) sur chaque
 cotation, cale un smile SVI par échéance et mesure la part des options repricées dans
 la fourchette bid-ask.
 
@@ -145,7 +145,7 @@ Le script vérifie aussi la théorie point par point : P&L moyen nul sous le bon
 théorique), formule ½ ∫ e^{−rt}(σ̃² − σ²) S² Γ dt pour une vol mal spécifiée, et
 couverture à σ_max qui ne perd jamais en moyenne quand la vol est incertaine.
 
-![Backtest de couverture](docs/couverture.png)
+![Backtest de couverture](docs/hedging.png)
 
 ---
 
@@ -155,18 +155,18 @@ couverture à σ_max qui ne perd jamais en moyenne quand la vol est incertaine.
 options-pricing/
 ├── pricer.py               Prix : Black–Scholes, MC, QMC, asiatique, américaine (LSM)
 ├── greeks.py               Grecques : formules fermées, pathwise, LR, différences finies, CRR
-├── dividendes.py           Arbre CRR américain avec dividendes discrets (spot / escrowed)
+├── dividends.py            Arbre CRR américain avec dividendes discrets (spot / escrowed)
 ├── svi.py                  Smile SVI : calage, contrôles d'arbitrage papillon et calendaire
-├── couverture.py           Backtest de couverture : delta-hedging, gamma-neutre, P&L
+├── hedging.py              Backtest de couverture : delta-hedging, gamma-neutre, P&L
 ├── bench.py                Benchmark des prix
 ├── bench_greeks.py         Benchmark des Grecques
-├── valider_pricer.py       crr_american vs QuantLib, propriétés théoriques
-├── adaptateur_crr.py       Adaptateur de crr_american pour valider_pricer.py
-├── valider_lsm.py          Longstaff–Schwartz vs QuantLib
-├── valider_dividendes.py   crr_american_div vs QuantLib
-├── valider_marche.py       Test sur une vraie chaîne d'options (Yahoo Finance ou CSV)
-├── valider_couverture.py   Validation du backtest de couverture contre la théorie
-├── generer_chaine_test.py  Chaîne synthétique (QuantLib) pour tester hors ligne
+├── validate_pricer.py      crr_american vs QuantLib, propriétés théoriques
+├── crr_adapter.py          Adaptateur de crr_american pour validate_pricer.py
+├── validate_lsm.py         Longstaff–Schwartz vs QuantLib
+├── validate_dividends.py   crr_american_div vs QuantLib
+├── validate_market.py      Test sur une vraie chaîne d'options (Yahoo Finance ou CSV)
+├── validate_hedging.py     Validation du backtest de couverture contre la théorie
+├── make_test_chain.py      Chaîne synthétique (QuantLib) pour tester hors ligne
 ├── docs/                   Graphiques du README
 ├── pyproject.toml          Configuration du projet et de pytest
 └── tests/
@@ -174,24 +174,24 @@ options-pricing/
     ├── test_closed_form.py     Formules fermées, parités, EDP de Black–Scholes
     ├── test_monte_carlo.py     Estimateurs MC, réduction de variance, LSM
     ├── test_greeks_mc.py       Grecques MC, différences finies, arbre CRR
-    ├── test_proprietes.py      Propriétés d'arbitrage et cohérence entre méthodes
-    ├── test_dividendes.py      Arbre avec dividendes discrets vs QuantLib
+    ├── test_properties.py      Propriétés d'arbitrage et cohérence entre méthodes
+    ├── test_dividends.py       Arbre avec dividendes discrets vs QuantLib
     ├── test_svi.py             Calage SVI et contrôles d'arbitrage
-    └── test_valider_marche.py  Mesure du temps, calage du borrow, vols implicites
+    └── test_validate_market.py  Mesure du temps, calage du borrow, vols implicites
 ```
 
 ```mermaid
 flowchart LR
     P[pricer.py] --> G[greeks.py]
-    G --> D[dividendes.py]
-    P --> C[couverture.py]
-    S[svi.py] --> M[valider_marche.py]
+    G --> D[dividends.py]
+    P --> C[hedging.py]
+    S[svi.py] --> M[validate_market.py]
     D --> M
     P --> B["bench*.py"]
     G --> B
-    G --> V["valider_pricer / lsm / dividendes<br/>(QuantLib)"]
+    G --> V["validate_pricer / lsm / dividendes<br/>(QuantLib)"]
     D --> V
-    C --> VC[valider_couverture.py]
+    C --> VC[validate_hedging.py]
 ```
 
 ---
@@ -257,14 +257,14 @@ print(crr_american_div(m, K=100, T=1, kind="put", dividends=divs, model="escrowe
 ```python
 import numpy as np
 from pricer import BlackScholes
-from couverture import simuler_couverture, OptionCouverture
+from couverture import simulate_hedging, HedgedOption
 
 m = BlackScholes(s0=100, r=0.03, sigma=0.20)                 # vol de couverture
 sigma_reelle = np.random.default_rng(0).uniform(0.15, 0.25, 100_000)
 
-delta  = simuler_couverture(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle)
-gamma0 = simuler_couverture(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle,
-                            couverture_gamma=OptionCouverture(K=100, T=1.0))
+delta  = simulate_hedging(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle)
+gamma0 = simulate_hedging(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle,
+                            couverture_gamma=HedgedOption(K=100, T=1.0))
 print(delta.resume()["ecart_type_rel"], gamma0.resume()["ecart_type_rel"])   # ≈ 0.17  0.02
 ```
 
@@ -326,10 +326,10 @@ python -m pytest -m "not slow"     # 220 tests, sans les Monte Carlo lourds
 | `test_closed_form.py` | 42 | Valeurs de référence, parité call-put, bornes d'arbitrage, EDP de Black–Scholes (Θ + ½σ²S²Γ + (r−q)SΔ − rV = 0) |
 | `test_monte_carlo.py` | 31 | Absence de biais, erreur en 1/√N, couverture réelle de l'IC à 95 %, reproductibilité |
 | `test_greeks_mc.py` | 43 | Chaque estimateur MC contre la formule exacte, différences finies, arbre CRR |
-| `test_proprietes.py` | 59 | Propriétés vraies pour tout jeu de paramètres (Hypothesis) : monotonies, convexité en strike, encadrements, convergence de l'arbre |
-| `test_dividendes.py` | 13 | Arbre avec dividendes discrets contre des valeurs de référence QuantLib |
+| `test_properties.py` | 59 | Propriétés vraies pour tout jeu de paramètres (Hypothesis) : monotonies, convexité en strike, encadrements, convergence de l'arbre |
+| `test_dividends.py` | 13 | Arbre avec dividendes discrets contre des valeurs de référence QuantLib |
 | `test_svi.py` | 18 | Calage SVI, conditions de papillon et calendaire |
-| `test_valider_marche.py` | 27 | Mesure du temps (fuseau, ACT/365), calage du borrow, inversion des vols |
+| `test_validate_market.py` | 27 | Mesure du temps (fuseau, ACT/365), calage du borrow, inversion des vols |
 
 Les tests Monte Carlo utilisent des **graines fixes** : une estimation est acceptée si
 l'écart à la référence est inférieur à 4 erreurs standard.
@@ -339,17 +339,17 @@ l'écart à la référence est inférieur à 4 erreurs standard.
 ## Validation externe
 
 ```bash
-python valider_pricer.py --module adaptateur_crr     # arbre CRR vs QuantLib
-python valider_lsm.py                                # Longstaff–Schwartz vs QuantLib
-python valider_dividendes.py                         # dividendes discrets vs QuantLib
-python valider_couverture.py                         # couverture vs théorie (≈ 20 s)
+python validate_pricer.py --module crr_adapter     # arbre CRR vs QuantLib
+python validate_lsm.py                                # Longstaff–Schwartz vs QuantLib
+python validate_dividends.py                         # dividendes discrets vs QuantLib
+python validate_hedging.py                         # couverture vs théorie (≈ 20 s)
 
 # Chaîne réelle (Yahoo Finance, données différées)
-python valider_marche.py --ticker AAPL --taux 0.04   # taux sans risque du jour à renseigner
+python validate_market.py --ticker AAPL --taux 0.04   # taux sans risque du jour à renseigner
 
 # Hors ligne : chaîne synthétique pricée par QuantLib
-python generer_chaine_test.py
-python valider_marche.py --chaine chaine_test.csv --dividendes dividendes_test.csv \
+python make_test_chain.py
+python validate_market.py --chaine chaine_test.csv --dividendes dividendes_test.csv \
                          --spot 227.5 --date 2026-10-06 --taux 0.04
 ```
 
@@ -365,7 +365,7 @@ régénérables et ne sont pas versionnés.
   stochastique dans le pricer.
 - **Longstaff–Schwartz** donne une borne **inférieure** du prix (politique d'exercice
   estimée) ; pour l'américaine vanille, l'arbre CRR est plus précis.
-- **Mesure du temps** de `valider_marche.py` : ACT/365 à la seconde, sans calendrier
+- **Mesure du temps** de `validate_market.py` : ACT/365 à la seconde, sans calendrier
   de bourse (week-ends, jours fériés) ; options sur indices réglées le matin hors périmètre.
 - **Couverture** : sans coûts de transaction ni impact de marché.
 

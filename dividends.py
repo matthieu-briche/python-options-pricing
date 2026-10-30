@@ -1,5 +1,5 @@
 """
-dividendes.py — Options américaines avec dividendes discrets (arbre CRR).
+dividends.py — Options américaines avec dividendes discrets (arbre CRR).
 
 Deux modèles de dividendes, les mêmes que QuantLib (FdBlackScholesVanillaEngine) :
 
@@ -183,7 +183,7 @@ def crr_american_div(m: BlackScholes, K: float, T: float, kind: OptionType = "pu
                 vega=float(vega), rho=float(rho), theta=float(theta))
 
 
-def prix_americain_div(S: float, K: float, T: float, r: float, q: float, sigma: float,
+def american_price_div(S: float, K: float, T: float, r: float, q: float, sigma: float,
                        kind: OptionType, dividends: Dividends = (), n: int = 400,
                        model: DivModel = "spot") -> float:
     """Prix seul (sans grecques), interface à plat : utile pour inverser la vol implicite."""

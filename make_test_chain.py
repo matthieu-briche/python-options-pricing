@@ -1,12 +1,12 @@
 """
 Génère une chaîne d'options synthétique réaliste, pricée par QuantLib (moteur
-indépendant de votre pricer), pour tester valider_marche.py sans connexion.
+indépendant de votre pricer), pour tester validate_market.py sans connexion.
 
 Paramètres « vrais » connus : taux 4 %, borrow 0,30 %, dividende trimestriel 0,26,
 smile avec skew. Le script de validation doit retrouver le borrow et repricer
 (quasiment) toute la chaîne dans la fourchette.
 
-Usage : python generer_chaine_test.py  ->  chaine_test.csv, dividendes_test.csv
+Usage : python make_test_chain.py  ->  chaine_test.csv, dividendes_test.csv
 """
 import math
 from datetime import date, timedelta
@@ -28,7 +28,7 @@ def vol_smile(K, T):
     return 0.24 + 0.02 * math.sqrt(T) - 0.09 * x + 0.12 * x * x
 
 
-def ql_prix(K, jours, kind, sig):
+def ql_price(K, jours, kind, sig):
     d0 = ql.Date(TODAY.day, TODAY.month, TODAY.year)
     ql.Settings.instance().evaluationDate = d0
     dc = ql.Actual365Fixed()
@@ -54,7 +54,7 @@ for j in JOURS:
     for K in np.arange(round(S * 0.75 / pas) * pas, S * 1.28, pas):
         for kind in ("call", "put"):
             sig = vol_smile(K, T)
-            mid = ql_prix(K, j, kind, sig)
+            mid = ql_price(K, j, kind, sig)
             if mid < 0.03:
                 continue
             spread = round(max(0.02, 0.012 * mid + 0.03 + 0.04 * abs(math.log(K / S))), 2)

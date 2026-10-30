@@ -1,5 +1,5 @@
 """
-Propriétés théoriques et cohérence interne de pricer.py, greeks.py et dividendes.py.
+Propriétés théoriques et cohérence interne de pricer.py, greeks.py et dividends.py.
 
 Pas de référence externe ici (QuantLib reste dans les scripts valider_*.py) :
 on teste ce qui doit être vrai pour TOUT jeu de paramètres raisonnable
@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from hypothesis import assume, given, settings, strategies as st
 
-from dividendes import crr_american_div, prix_americain_div
+from dividends import crr_american_div, american_price_div
 from greeks import (GREEKS, bs_greeks, crr_american, fd_greeks_crn,
                     mc_asian_greeks, mc_european_greeks)
 from pricer import (BlackScholes, _RunningStats, bs_delta_vega, bs_price,
@@ -257,7 +257,7 @@ def test_crr_grecques_coherentes_avec_reprice():
 
 
 # =========================================================================== #
-# 4. Dividendes discrets (dividendes.py) — correction : détachement précoce
+# 4. Dividendes discrets (dividends.py) — correction : détachement précoce
 # =========================================================================== #
 M_DIV = BlackScholes(100.0, 0.04, 0.25)
 
@@ -274,9 +274,9 @@ def test_pas_d_avertissement_pour_un_dividende_normal():
 
 
 def test_dividendes_hors_echeance_ou_passes_ignores():
-    ref = prix_americain_div(100, 100, 1.0, 0.04, 0, 0.25, "put", [], n=N_ARBRE)
+    ref = american_price_div(100, 100, 1.0, 0.04, 0, 0.25, "put", [], n=N_ARBRE)
     for divs in ([(-0.1, 2.0)], [(1.5, 2.0)], [(0.3, 0.0)]):
-        assert prix_americain_div(100, 100, 1.0, 0.04, 0, 0.25, "put", divs, n=N_ARBRE) \
+        assert american_price_div(100, 100, 1.0, 0.04, 0, 0.25, "put", divs, n=N_ARBRE) \
             == pytest.approx(ref, abs=1e-12)
 
 
@@ -287,14 +287,14 @@ def test_escrowed_refuse_dividendes_superieurs_au_cours():
 
 def test_arbre_div_refuse_probabilite_hors_bornes():
     with pytest.raises(ValueError):
-        prix_americain_div(100, 100, 1.2, 0.04, -0.40, 0.005, "put", [(0.5, 1.0)], n=400)
+        american_price_div(100, 100, 1.2, 0.04, -0.40, 0.005, "put", [(0.5, 1.0)], n=400)
 
 
 @settings(max_examples=25, deadline=None)
 @given(K=s_K, t_div=st.floats(0.1, 0.9), D1=st.floats(0.0, 3.0), dD=st.floats(0.5, 3.0),
        sig=s_sig, model=st.sampled_from(["spot", "escrowed"]))
 def test_call_baisse_put_monte_avec_le_dividende(K, t_div, D1, dD, sig, model):
-    p = lambda kind, D: prix_americain_div(100, K, 1.0, 0.04, 0.0, sig, kind,
+    p = lambda kind, D: american_price_div(100, K, 1.0, 0.04, 0.0, sig, kind,
                                            [(t_div, D)], n=N_ARBRE, model=model)
     assert p("call", D1 + dD) <= p("call", D1) + 1e-6
     assert p("put", D1 + dD) >= p("put", D1) - 1e-6
@@ -304,7 +304,7 @@ def test_call_baisse_put_monte_avec_le_dividende(K, t_div, D1, dD, sig, model):
 @given(K=s_K, sig=s_sig, kind=s_kind, model=st.sampled_from(["spot", "escrowed"]),
        D=st.floats(0.5, 5.0), t_div=st.floats(0.05, 0.95))
 def test_dividende_au_dessus_de_l_intrinseque(K, sig, kind, model, D, t_div):
-    v = prix_americain_div(100, K, 1.0, 0.04, 0.0, sig, kind, [(t_div, D)],
+    v = american_price_div(100, K, 1.0, 0.04, 0.0, sig, kind, [(t_div, D)],
                            n=N_ARBRE, model=model)
     assert v >= max((100 - K) if kind == "call" else (K - 100), 0.0) - 1e-9
 
@@ -312,7 +312,7 @@ def test_dividende_au_dessus_de_l_intrinseque(K, sig, kind, model, D, t_div):
 @pytest.mark.parametrize("model", ["spot", "escrowed"])
 def test_prix_seul_coherent_avec_crr_american_div(model):
     divs = [(0.3, 1.5), (0.8, 1.5)]
-    a = prix_americain_div(100, 105, 1.0, 0.04, 0.01, 0.3, "put", divs, n=500, model=model)
+    a = american_price_div(100, 105, 1.0, 0.04, 0.01, 0.3, "put", divs, n=500, model=model)
     b = crr_american_div(BlackScholes(100, 0.04, 0.3, 0.01), 105, 1.0, "put", divs,
                          n=500, model=model)["price"]
     assert a == pytest.approx(b, abs=1e-12)
@@ -320,8 +320,8 @@ def test_prix_seul_coherent_avec_crr_american_div(model):
 
 def test_spot_et_escrowed_proches_pour_petits_dividendes():
     divs = [(0.25, 0.2), (0.75, 0.2)]
-    s = prix_americain_div(100, 100, 1.0, 0.04, 0, 0.25, "put", divs, n=800, model="spot")
-    e = prix_americain_div(100, 100, 1.0, 0.04, 0, 0.25, "put", divs, n=800, model="escrowed")
+    s = american_price_div(100, 100, 1.0, 0.04, 0, 0.25, "put", divs, n=800, model="spot")
+    e = american_price_div(100, 100, 1.0, 0.04, 0, 0.25, "put", divs, n=800, model="escrowed")
     assert s == pytest.approx(e, abs=0.02)
 
 

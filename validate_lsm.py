@@ -7,7 +7,7 @@ Le LSM est un Monte-Carlo : on ne peut pas exiger l'égalité exacte. On vérifi
   2. Convergence en nombre de dates d'exercice (n_steps) : l'écart doit diminuer.
   3. Stabilité vs seed : la dispersion entre seeds doit être cohérente avec l'erreur-type.
 
-Usage : python valider_lsm.py
+Usage : python validate_lsm.py
 """
 import itertools
 import time
@@ -16,14 +16,14 @@ import numpy as np
 import pandas as pd
 
 from pricer import BlackScholes, lsm_american_put
-from valider_pricer import ql_reference, Bilan
+from validate_pricer import ql_reference, Report
 
 TOL_BIAIS = 0.05   # biais bas toléré (en unités de prix, S = 100)
 S0 = 100.0
 
 
 def main():
-    bilan, lignes, t0 = Bilan(), [], time.time()
+    bilan, lignes, t0 = Report(), [], time.time()
     lsm_american_put(BlackScholes(100, 0.05, 0.2), 100, 1.0, n_paths=1000)  # compilation Numba
 
     sec = "1. LSM vs QuantLib (biais attendu vers le bas)"

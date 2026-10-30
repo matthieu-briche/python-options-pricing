@@ -112,7 +112,7 @@ A single simulation yields the price **and** all 5 Greeks (2M paths):
 
 ### Volatility smile on market data
 
-`valider_marche.py` inverts the American pricer (discrete dividends) on every quote,
+`validate_market.py` inverts the American pricer (discrete dividends) on every quote,
 fits an SVI smile per expiry and measures the share of options repriced within the
 bid-ask spread.
 
@@ -143,7 +143,7 @@ model, standard deviation scaling as 1/√N (measured log-log slope −0.49, 1 t
 the first-order theory), the formula ½ ∫ e^{−rt}(σ̃² − σ²) S² Γ dt for a misspecified
 vol, and that hedging at σ_max never loses on average when the vol is uncertain.
 
-![Hedging backtest](docs/couverture.png)
+![Hedging backtest](docs/hedging.png)
 
 ---
 
@@ -155,18 +155,18 @@ File names are in French; here is what each one does.
 options-pricing/
 ├── pricer.py               Prices: Black–Scholes, MC, QMC, Asian, American (LSM)
 ├── greeks.py               Greeks: closed form, pathwise, LR, finite differences, CRR
-├── dividendes.py           American CRR tree with discrete dividends (spot / escrowed)
+├── dividends.py            American CRR tree with discrete dividends (spot / escrowed)
 ├── svi.py                  SVI smile: fitting, butterfly and calendar arbitrage checks
-├── couverture.py           Hedging backtest: delta hedging, gamma-neutral, P&L
+├── hedging.py              Hedging backtest: delta hedging, gamma-neutral, P&L
 ├── bench.py                Price benchmark
 ├── bench_greeks.py         Greeks benchmark
-├── valider_pricer.py       crr_american vs QuantLib, theoretical properties
-├── adaptateur_crr.py       Adapter for crr_american used by valider_pricer.py
-├── valider_lsm.py          Longstaff–Schwartz vs QuantLib
-├── valider_dividendes.py   crr_american_div vs QuantLib
-├── valider_marche.py       Test on a real option chain (Yahoo Finance or CSV)
-├── valider_couverture.py   Validation of the hedging backtest against theory
-├── generer_chaine_test.py  Synthetic chain (QuantLib) for offline testing
+├── validate_pricer.py      crr_american vs QuantLib, theoretical properties
+├── crr_adapter.py          Adapter for crr_american used by validate_pricer.py
+├── validate_lsm.py         Longstaff–Schwartz vs QuantLib
+├── validate_dividends.py   crr_american_div vs QuantLib
+├── validate_market.py      Test on a real option chain (Yahoo Finance or CSV)
+├── validate_hedging.py     Validation of the hedging backtest against theory
+├── make_test_chain.py      Synthetic chain (QuantLib) for offline testing
 ├── docs/                   README charts
 ├── pyproject.toml          Project and pytest configuration
 └── tests/
@@ -174,24 +174,24 @@ options-pricing/
     ├── test_closed_form.py     Closed forms, parities, Black–Scholes PDE
     ├── test_monte_carlo.py     MC estimators, variance reduction, LSM
     ├── test_greeks_mc.py       MC Greeks, finite differences, CRR tree
-    ├── test_proprietes.py      Arbitrage properties and cross-method consistency
-    ├── test_dividendes.py      Discrete-dividend tree vs QuantLib
+    ├── test_properties.py      Arbitrage properties and cross-method consistency
+    ├── test_dividends.py       Discrete-dividend tree vs QuantLib
     ├── test_svi.py             SVI fitting and arbitrage checks
-    └── test_valider_marche.py  Time measurement, borrow calibration, implied vols
+    └── test_validate_market.py  Time measurement, borrow calibration, implied vols
 ```
 
 ```mermaid
 flowchart LR
     P[pricer.py] --> G[greeks.py]
-    G --> D[dividendes.py]
-    P --> C[couverture.py]
-    S[svi.py] --> M[valider_marche.py]
+    G --> D[dividends.py]
+    P --> C[hedging.py]
+    S[svi.py] --> M[validate_market.py]
     D --> M
     P --> B["bench*.py"]
     G --> B
-    G --> V["valider_pricer / lsm / dividendes<br/>(QuantLib)"]
+    G --> V["validate_pricer / lsm / dividendes<br/>(QuantLib)"]
     D --> V
-    C --> VC[valider_couverture.py]
+    C --> VC[validate_hedging.py]
 ```
 
 ---
@@ -257,14 +257,14 @@ print(crr_american_div(m, K=100, T=1, kind="put", dividends=divs, model="escrowe
 ```python
 import numpy as np
 from pricer import BlackScholes
-from couverture import simuler_couverture, OptionCouverture
+from couverture import simulate_hedging, HedgedOption
 
 m = BlackScholes(s0=100, r=0.03, sigma=0.20)                 # hedging vol
 sigma_reelle = np.random.default_rng(0).uniform(0.15, 0.25, 100_000)   # realised vol per path
 
-delta  = simuler_couverture(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle)
-gamma0 = simuler_couverture(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle,
-                            couverture_gamma=OptionCouverture(K=100, T=1.0))
+delta  = simulate_hedging(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle)
+gamma0 = simulate_hedging(m, K=100, T=0.5, n_reb=52, sigma_reelle=sigma_reelle,
+                            couverture_gamma=HedgedOption(K=100, T=1.0))
 print(delta.resume()["ecart_type_rel"], gamma0.resume()["ecart_type_rel"])   # ≈ 0.17  0.02
 ```
 
@@ -326,10 +326,10 @@ python -m pytest -m "not slow"     # 220 tests, without the heavy Monte Carlo ru
 | `test_closed_form.py` | 42 | Reference values, put-call parity, arbitrage bounds, Black–Scholes PDE (Θ + ½σ²S²Γ + (r−q)SΔ − rV = 0) |
 | `test_monte_carlo.py` | 31 | Unbiasedness, 1/√N error, actual coverage of the 95% CI, reproducibility |
 | `test_greeks_mc.py` | 43 | Each MC estimator vs. the exact formula, finite differences, CRR tree |
-| `test_proprietes.py` | 59 | Properties holding for any parameter set (Hypothesis): monotonicity, convexity in strike, bounds, tree convergence |
-| `test_dividendes.py` | 13 | Discrete-dividend tree vs. QuantLib reference values |
+| `test_properties.py` | 59 | Properties holding for any parameter set (Hypothesis): monotonicity, convexity in strike, bounds, tree convergence |
+| `test_dividends.py` | 13 | Discrete-dividend tree vs. QuantLib reference values |
 | `test_svi.py` | 18 | SVI fitting, butterfly and calendar conditions |
-| `test_valider_marche.py` | 27 | Time measurement (time zone, ACT/365), borrow calibration, vol inversion |
+| `test_validate_market.py` | 27 | Time measurement (time zone, ACT/365), borrow calibration, vol inversion |
 
 Monte Carlo tests use **fixed seeds**: an estimate passes if its distance to the
 reference is less than 4 standard errors.
@@ -339,17 +339,17 @@ reference is less than 4 standard errors.
 ## External validation
 
 ```bash
-python valider_pricer.py --module adaptateur_crr     # CRR tree vs QuantLib
-python valider_lsm.py                                # Longstaff–Schwartz vs QuantLib
-python valider_dividendes.py                         # discrete dividends vs QuantLib
-python valider_couverture.py                         # hedging vs theory (≈ 20 s)
+python validate_pricer.py --module crr_adapter     # CRR tree vs QuantLib
+python validate_lsm.py                                # Longstaff–Schwartz vs QuantLib
+python validate_dividends.py                         # discrete dividends vs QuantLib
+python validate_hedging.py                         # hedging vs theory (≈ 20 s)
 
 # Real chain (Yahoo Finance, delayed data)
-python valider_marche.py --ticker AAPL --taux 0.04   # set today's risk-free rate
+python validate_market.py --ticker AAPL --taux 0.04   # set today's risk-free rate
 
 # Offline: synthetic chain priced by QuantLib
-python generer_chaine_test.py
-python valider_marche.py --chaine chaine_test.csv --dividendes dividendes_test.csv \
+python make_test_chain.py
+python validate_market.py --chaine chaine_test.csv --dividendes dividendes_test.csv \
                          --spot 227.5 --date 2026-10-06 --taux 0.04
 ```
 
@@ -365,7 +365,7 @@ regenerated and are not version-controlled.
   volatility in the pricer.
 - **Longstaff–Schwartz** gives a **lower** bound on the price (estimated exercise
   policy); for vanilla American options, the CRR tree is more accurate.
-- **Time measurement** in `valider_marche.py`: ACT/365 to the second, without an
+- **Time measurement** in `validate_market.py`: ACT/365 to the second, without an
   exchange calendar (weekends, holidays); AM-settled index options are out of scope.
 - **Hedging**: no transaction costs or market impact.
 

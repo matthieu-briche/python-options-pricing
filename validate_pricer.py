@@ -3,9 +3,9 @@ Validation d'un pricer d'options américaines (prix + grecques).
 
 Usage :
     pip install QuantLib numpy scipy pandas
-    python valider_pricer.py              # grille rapide
-    python valider_pricer.py --complet    # grille étendue
-    python valider_pricer.py --module autre_fichier   # tester un autre module
+    python validate_pricer.py              # grille rapide
+    python validate_pricer.py --complet    # grille étendue
+    python validate_pricer.py --module autre_fichier   # tester un autre module
 
 Le module testé doit exposer :
     price(S, K, T, r, q, sigma, option_type) -> float
@@ -120,7 +120,7 @@ def ql_reference(S, K, days, r, q, sigma, option_type, dividends=(), div_model="
 # ---------------------------------------------------------------------------
 # Black-Scholes européen (pour les tests de propriétés)
 # ---------------------------------------------------------------------------
-def bs_europeen(S, K, T, r, q, sigma, option_type):
+def bs_european(S, K, T, r, q, sigma, option_type):
     d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
     if option_type == "call":
@@ -131,7 +131,7 @@ def bs_europeen(S, K, T, r, q, sigma, option_type):
 # ---------------------------------------------------------------------------
 # Utilitaires
 # ---------------------------------------------------------------------------
-class Bilan:
+class Report:
     def __init__(self):
         self.lignes = []
 
@@ -157,11 +157,11 @@ class Bilan:
         return total_ko
 
 
-def proche(a, b, tol_abs, tol_rel):
+def is_close(a, b, tol_abs, tol_rel):
     return abs(a - b) <= max(tol_abs, tol_rel * abs(b))
 
 
-def grille(complet):
+def param_grid(complet):
     if complet:
         Ks = [70, 80, 90, 100, 110, 120, 130]
         days = [7, 30, 91, 182, 365, 730]
@@ -183,41 +183,41 @@ def grille(complet):
 # ---------------------------------------------------------------------------
 def test_vs_quantlib(pm, bilan, complet):
     lignes = []
-    for c in grille(complet):
+    for c in param_grid(complet):
         args = (c["S"], c["K"], c["T"], c["r"], c["q"], c["sigma"], c["type"])
         ref = ql_reference(c["S"], c["K"], c["days"], c["r"], c["q"], c["sigma"], c["type"])
         p = pm.price(*args)
         g = pm.greeks(*args)
         ligne = dict(c, prix=p, prix_ql=ref["prix"], ecart_prix=p - ref["prix"])
-        ok = proche(p, ref["prix"], TOL_PRIX_ABS, TOL_PRIX_REL)
+        ok = is_close(p, ref["prix"], TOL_PRIX_ABS, TOL_PRIX_REL)
         nom = f"{c['type']} K={c['K']:.0f} T={c['days']}j vol={c['sigma']} r={c['r']} q={c['q']}"
         bilan.check("1. Prix vs QuantLib", nom, ok,
                     f"vous={p:.4f} QL={ref['prix']:.4f}")
         for gk in ["delta", "gamma", "vega", "theta", "rho"]:
             mine = g[gk] * ECHELLES[gk]
             ligne[gk], ligne[gk + "_ql"] = mine, ref[gk]
-            okg = proche(mine, ref[gk], TOL_GREC[gk], TOL_GREC_REL)
+            okg = is_close(mine, ref[gk], TOL_GREC[gk], TOL_GREC_REL)
             bilan.check(f"1. {gk.capitalize()} vs QuantLib", nom, okg,
                         f"vous={mine:.5f} QL={ref[gk]:.5f}")
         lignes.append(ligne)
     return pd.DataFrame(lignes)
 
 
-def test_proprietes(pm, bilan):
+def test_properties(pm, bilan):
     S, T, sig = S0, 0.5, 0.25
     sec = "2. Propriétés théoriques"
 
     # Call américain sans dividende = call européen
     for K in [80, 100, 120]:
         a = pm.price(S, K, T, 0.05, 0.0, sig, "call")
-        e = bs_europeen(S, K, T, 0.05, 0.0, sig, "call")
+        e = bs_european(S, K, T, 0.05, 0.0, sig, "call")
         bilan.check(sec, f"Call sans dividende = européen (K={K})",
-                    proche(a, e, TOL_PRIX_ABS, TOL_PRIX_REL), f"am={a:.4f} eu={e:.4f}")
+                    is_close(a, e, TOL_PRIX_ABS, TOL_PRIX_REL), f"am={a:.4f} eu={e:.4f}")
 
     # Put américain >= européen et >= intrinsèque ; <= K
     for K in [80, 100, 120, 150]:
         a = pm.price(S, K, T, 0.05, 0.0, sig, "put")
-        e = bs_europeen(S, K, T, 0.05, 0.0, sig, "put")
+        e = bs_european(S, K, T, 0.05, 0.0, sig, "put")
         bilan.check(sec, f"Put am >= européen (K={K})", a >= e - 1e-6, f"am={a:.4f} eu={e:.4f}")
         bilan.check(sec, f"Put am >= intrinsèque (K={K})", a >= max(K - S, 0) - 1e-6)
         bilan.check(sec, f"Put am <= K (K={K})", a <= K + 1e-9)
@@ -252,7 +252,7 @@ def test_proprietes(pm, bilan):
         bilan.check(sec, f"{t} monotone en strike", all(sens))
 
 
-def test_grecques_internes(pm, bilan):
+def test_internal_greeks(pm, bilan):
     sec = "3. Grecques vs bump-and-reprice de votre pricer"
     # Pas de 5 % sur le spot : un pas plus petit rend le gamma "bump" instable
     # sur les pricers en arbre (le prix oscille en fonction de S entre les nœuds)
@@ -274,7 +274,7 @@ def test_grecques_internes(pm, bilan):
         for gk, v in fd.items():
             mine = g[gk] * ECHELLES[gk]
             bilan.check(sec, f"{gk} {t} K={K} T={T}",
-                        proche(mine, v, TOL_GREC[gk], tol_rel.get(gk, 2 * TOL_GREC_REL)),
+                        is_close(mine, v, TOL_GREC[gk], tol_rel.get(gk, 2 * TOL_GREC_REL)),
                         f"analytique={mine:.5f} bump={v:.5f}")
         d = g["delta"] * ECHELLES["delta"]
         borne = (0 <= d <= 1) if t == "call" else (-1 <= d <= 0)
@@ -303,7 +303,7 @@ def test_convergence(pm, bilan):
                 f"écart={p[-1] - ref:+.5f}")
 
 
-def test_vol_implicite(pm, bilan):
+def test_implied_vol(pm, bilan):
     sec = "5. Aller-retour volatilité implicite"
     for K, T, sig, t in [(80, 0.25, 0.35, "put"), (100, 0.5, 0.20, "put"),
                          (120, 1.0, 0.25, "call"), (100, 2.0, 0.45, "call")]:
@@ -326,15 +326,15 @@ def main():
     a = ap.parse_args()
 
     pm = importlib.import_module(a.module)
-    bilan = Bilan()
+    bilan = Report()
     t0 = time.time()
     print(f"Validation de '{a.module}' (QuantLib {ql.__version__})")
 
     df = test_vs_quantlib(pm, bilan, a.complet)
-    test_proprietes(pm, bilan)
-    test_grecques_internes(pm, bilan)
+    test_properties(pm, bilan)
+    test_internal_greeks(pm, bilan)
     test_convergence(pm, bilan)
-    test_vol_implicite(pm, bilan)
+    test_implied_vol(pm, bilan)
 
     df.to_csv(a.csv, index=False)
     e = df["ecart_prix"].abs()

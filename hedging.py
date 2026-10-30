@@ -1,5 +1,5 @@
 """
-couverture.py — Backtest de couverture : P&L d'une stratégie de delta-hedging.
+hedging.py — Backtest de couverture : P&L d'une stratégie de delta-hedging.
 
 Le prix d'une option est le coût de sa couverture (Bouchard & Chassagneux,
 *Fundamentals and Advanced Techniques in Derivatives Hedging*, Springer 2016).
@@ -23,7 +23,7 @@ Deux sources d'erreur (B&C, § 7.3) :
   2. Rebalancement discret (§ 7.3.2) : erreur d'écart-type en O(1/√N).
      Au premier ordre, chaque pas contribue −½ Γ S² σ² (Z² − 1) Δt, d'où
          Var(P&L) ≈ Σ_i e^{-2r t_i} ½ σ⁴ Δt² E[Γ(t_i, S_{t_i})² S_{t_i}⁴]
-     calculé par quadrature dans ecart_type_theorique().
+     calculé par quadrature dans theoretical_std().
 
 Conventions : dividende continu q réinvesti en actions ; cash rémunéré à r ;
 P&L = (valeur du portefeuille − payoff) à l'échéance, actualisé en 0.
@@ -70,7 +70,7 @@ def _bs(S: np.ndarray, K: float, tau: float, r: float, q: float, sig: float,
 # Résultats
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
-class OptionCouverture:
+class HedgedOption:
     """Seconde option, traitée à son prix modèle (vol σ̃), pour neutraliser le gamma."""
     K: float
     T: float                     # doit être >= l'échéance de l'option couverte
@@ -78,7 +78,7 @@ class OptionCouverture:
 
 
 @dataclass
-class ResultatCouverture:
+class HedgingResult:
     pnl: np.ndarray              # P&L actualisé en 0, par trajectoire
     erreur_vol: np.ndarray       # ½ ∫ e^{-rt} (σ̃² − σ_t²) S² Γ_net dt (somme de Riemann)
     prime: float                 # prix encaissé à t = 0 (vol σ̃)
@@ -119,12 +119,12 @@ class ResultatCouverture:
 # --------------------------------------------------------------------------- #
 # Simulation
 # --------------------------------------------------------------------------- #
-def simuler_couverture(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
+def simulate_hedging(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
                        n_reb: int = 52, n_paths: int = 100_000,
                        sigma_reelle: float | np.ndarray | None = None,
                        mu: float | None = None,
-                       couverture_gamma: OptionCouverture | None = None,
-                       chunk: int = 2**15, seed: int = 2026) -> ResultatCouverture:
+                       couverture_gamma: HedgedOption | None = None,
+                       chunk: int = 2**15, seed: int = 2026) -> HedgingResult:
     """
     Vend l'option (K, T, kind) au prix Black-Scholes de vol m.sigma (= σ̃) et la
     couvre en delta (et en gamma si `couverture_gamma`) à n_reb dates équidistantes.
@@ -192,14 +192,14 @@ def simuler_couverture(m: BlackScholes, K: float, T: float, kind: OptionType = "
         X_T = a * S + n2 * H + cash
         pnl[d:d + b] = math.exp(-m.r * T) * (X_T - np.maximum(sgn * (S - K), 0.0))
         err[d:d + b] = e_vol
-    return ResultatCouverture(pnl, err, prime, n_reb,
+    return HedgingResult(pnl, err, prime, n_reb,
                               dict(sigma_couverture=sig_c, mu=mu, gamma_neutre=G is not None))
 
 
 # --------------------------------------------------------------------------- #
 # Référence : écart-type théorique de l'erreur de rebalancement discret
 # --------------------------------------------------------------------------- #
-def ecart_type_theorique(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
+def theoretical_std(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
                          n_reb: int = 52, mu: float | None = None, n_quad: int = 4001) -> float:
     """
     Premier ordre de l'erreur de couverture discrète, modèle juste (σ réalisée = σ̃) :
@@ -234,12 +234,12 @@ def _demo() -> None:
     K, T = 100.0, 0.5
     print("Vente d'un call ATM 6 mois, couvert en delta (100 000 trajectoires)\n")
     for n in (12, 52, 252):
-        res = simuler_couverture(m, K, T, n_reb=n)
+        res = simulate_hedging(m, K, T, n_reb=n)
         print(f"N={n:4d}  {res}")
-        print(f"        écart-type théorique (1er ordre) : {ecart_type_theorique(m, K, T, n_reb=n):.4f}")
+        print(f"        écart-type théorique (1er ordre) : {theoretical_std(m, K, T, n_reb=n):.4f}")
     print("\nVol de couverture 20 %, vol réalisée 25 % (sous-estimation) :")
-    print("  ", simuler_couverture(m, K, T, n_reb=252, sigma_reelle=0.25))
-    print("\nPour la validation complète : python valider_couverture.py")
+    print("  ", simulate_hedging(m, K, T, n_reb=252, sigma_reelle=0.25))
+    print("\nPour la validation complète : python validate_hedging.py")
 
 
 if __name__ == "__main__":

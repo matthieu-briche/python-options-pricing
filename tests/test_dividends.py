@@ -2,10 +2,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-"""Tests de dividendes.crr_american_div (valeurs de référence QuantLib 1.43, FD 1600x1600)."""
+"""Tests de dividends.crr_american_div (valeurs de référence QuantLib 1.43, FD 1600x1600)."""
 import pytest
 
-from dividendes import crr_american_div, prix_americain_div
+from dividends import crr_american_div, american_price_div
 from greeks import crr_american
 from pricer import BlackScholes
 
@@ -32,8 +32,8 @@ def test_prix_vs_quantlib(kind, K, model, ref):
 
 
 def test_call_decroissant_put_croissant_avec_dividende():
-    calls = [prix_americain_div(100, 100, 1.0, 0.04, 0, 0.25, "call", [(0.4, D)]) for D in (0, 1, 3)]
-    puts = [prix_americain_div(100, 100, 1.0, 0.04, 0, 0.25, "put", [(0.4, D)]) for D in (0, 1, 3)]
+    calls = [american_price_div(100, 100, 1.0, 0.04, 0, 0.25, "call", [(0.4, D)]) for D in (0, 1, 3)]
+    puts = [american_price_div(100, 100, 1.0, 0.04, 0, 0.25, "put", [(0.4, D)]) for D in (0, 1, 3)]
     assert calls[0] > calls[1] > calls[2]
     assert puts[0] < puts[1] < puts[2]
 

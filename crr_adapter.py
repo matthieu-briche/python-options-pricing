@@ -1,5 +1,5 @@
 """
-Adaptateur : expose greeks.crr_american avec l'interface attendue par valider_pricer.py.
+Adaptateur : expose greeks.crr_american avec l'interface attendue par validate_pricer.py.
 
     price(S, K, T, r, q, sigma, option_type, n=...)
     greeks(S, K, T, r, q, sigma, option_type) -> dict(delta, gamma, vega, theta, rho)

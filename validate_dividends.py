@@ -1,5 +1,5 @@
 """
-Validation de dividendes.crr_american_div (options américaines, dividendes discrets).
+Validation de dividends.crr_american_div (options américaines, dividendes discrets).
 
   1. Prix et grecques vs QuantLib, modèles "spot" et "escrowed"
   2. Propriétés : sans dividende = crr_american ; monotonie en montant de dividende ;
@@ -7,7 +7,7 @@ Validation de dividendes.crr_american_div (options américaines, dividendes disc
      call profondément ITM exercé juste avant le détachement
   3. Écart entre les deux modèles (information, pas un test)
 
-Usage : python valider_dividendes.py
+Usage : python validate_dividends.py
 """
 import itertools
 import math
@@ -16,10 +16,10 @@ import time
 import pandas as pd
 import QuantLib as ql
 
-from dividendes import crr_american_div
+from dividends import crr_american_div
 from greeks import crr_american
 from pricer import BlackScholes
-from valider_pricer import (Bilan, ql_reference, proche, TOL_PRIX_ABS, TOL_PRIX_REL,
+from validate_pricer import (Report, ql_reference, is_close, TOL_PRIX_ABS, TOL_PRIX_REL,
                             TOL_GREC, TOL_GREC_REL, TODAY, DC)
 
 S0 = 100.0
@@ -31,7 +31,7 @@ ECHEANCIERS = {
 }
 
 
-def ql_europeen_div(S, K, days, r, sig, kind, divs):
+def ql_european_div(S, K, days, r, sig, kind, divs):
     """Européen avec dividendes discrets (formule analytique, modèle escrowed)."""
     proc = ql.BlackScholesMertonProcess(
         ql.QuoteHandle(ql.SimpleQuote(S)),
@@ -47,7 +47,7 @@ def ql_europeen_div(S, K, days, r, sig, kind, divs):
 
 
 def main():
-    bilan, lignes, t0 = Bilan(), [], time.time()
+    bilan, lignes, t0 = Report(), [], time.time()
 
     # 1. Comparaison QuantLib
     for (nom_ech, ech), K, days, sig, kind, model in itertools.product(
@@ -65,12 +65,12 @@ def main():
             mine, theirs = g[gk], ref[gk_ql]
             ligne[gk_ql], ligne[gk_ql + "_ql"] = mine, theirs
             if gk == "price":
-                ok = proche(mine, theirs, TOL_PRIX_ABS, TOL_PRIX_REL)
+                ok = is_close(mine, theirs, TOL_PRIX_ABS, TOL_PRIX_REL)
             elif gk == "rho" and nom_ech.startswith("gros"):
                 # biais de discrétisation O(1/n) documenté dans crr_american_div
-                ok = proche(mine, theirs, TOL_GREC[gk], 0.03)
+                ok = is_close(mine, theirs, TOL_GREC[gk], 0.03)
             else:
-                ok = proche(mine, theirs, TOL_GREC[gk], TOL_GREC_REL)
+                ok = is_close(mine, theirs, TOL_GREC[gk], TOL_GREC_REL)
             bilan.check(f"1. {gk_ql.capitalize()} vs QuantLib (dividendes)", nom, ok,
                         f"vous={mine:.5f} QL={theirs:.5f}")
         lignes.append(ligne)
@@ -90,7 +90,7 @@ def main():
     for K in [80, 100]:
         divs = [(60, 3.0)]
         am = crr_american_div(m, K, 0.5, "call", [(60 / 365, 3.0)], model="escrowed")["price"]
-        eu = ql_europeen_div(S0, K, 182, 0.04, 0.25, "call", divs)
+        eu = ql_european_div(S0, K, 182, 0.04, 0.25, "call", divs)
         bilan.check(sec, f"Call américain >= européen avec dividende (K={K})", am >= eu - 1e-3,
                     f"am={am:.4f} eu={eu:.4f} prime d'exercice anticipé={am - eu:.4f}")
     # Call très ITM, gros dividende imminent : exercer juste avant le détachement

@@ -1,15 +1,15 @@
 """
-valider_marche.py — Tester le pricer américain (avec dividendes discrets) sur une
+validate_market.py — Tester le pricer américain (avec dividendes discrets) sur une
 vraie chaîne d'options cotées.
 
 Deux façons de l'utiliser :
 
   1) Téléchargement automatique (Yahoo Finance, données différées) :
         pip install yfinance matplotlib
-        python valider_marche.py --ticker AAPL --taux 0.04
+        python validate_market.py --ticker AAPL --taux 0.04
 
   2) À partir de fichiers CSV (votre propre source : IBKR, CBOE, Bloomberg…) :
-        python valider_marche.py --chaine chaine.csv --dividendes dividendes.csv \
+        python validate_market.py --chaine chaine.csv --dividendes dividends.csv \
                                  --spot 227.5 --date 2026-10-06 --heure 16:00 --taux 0.04
 
      --heure : heure de New York à laquelle le spot et les cotations ont été
@@ -17,7 +17,7 @@ Deux façons de l'utiliser :
 
      chaine.csv     : expiration (AAAA-MM-JJ), type (call/put), strike, bid, ask,
                       [volume], [open_interest], [iv_source]
-     dividendes.csv : ex_date (AAAA-MM-JJ), montant      (fichier facultatif)
+     dividends.csv : ex_date (AAAA-MM-JJ), montant      (fichier facultatif)
 
 Ce que fait le script :
   1. Filtre les cotations inexploitables (fourchette trop large, bid nul…).
@@ -56,9 +56,9 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
-from dividendes import prix_americain_div
+from dividends import american_price_div
 from pricer import sigma_min_crr
-from svi import arbitrage_calendaire, arbitrage_papillon, caler_svi
+from svi import calendar_arbitrage, butterfly_arbitrage, calibrate_svi
 
 # Filtres de qualité des cotations
 SPREAD_MAX = 0.25        # (ask - bid) / mid maximal
@@ -78,7 +78,7 @@ SECONDES_PAR_AN = 365.0 * 86400.0          # ACT/365, comme les taux et les vols
 # --------------------------------------------------------------------------- #
 # Temps
 # --------------------------------------------------------------------------- #
-def fuseau() -> ZoneInfo:
+def market_tz() -> ZoneInfo:
     try:
         return ZoneInfo(FUSEAU)
     except Exception as e:                                  # Windows sans base IANA
@@ -86,16 +86,16 @@ def fuseau() -> ZoneInfo:
                            "'python -m pip install tzdata'") from e
 
 
-def instant(jour, heure: heure_du_jour) -> datetime:
+def market_time(jour, heure: heure_du_jour) -> datetime:
     """Date (date, ou chaîne AAAA-MM-JJ éventuellement suivie d'une heure) à l'heure donnée, à New York."""
     if not isinstance(jour, date):
         jour = date.fromisoformat(str(jour)[:10])
     elif isinstance(jour, datetime):
         jour = jour.date()
-    return datetime.combine(jour, heure, tzinfo=fuseau())
+    return datetime.combine(jour, heure, tzinfo=market_tz())
 
 
-def annees(debut: datetime, fin: datetime) -> float:
+def year_fraction(debut: datetime, fin: datetime) -> float:
     """Durée en années ACT/365, à la seconde près (datetimes avec fuseau)."""
     # Passage en UTC indispensable : Python soustrait deux datetimes de MÊME fuseau
     # en heure murale, et ignorerait l'heure gagnée ou perdue au changement d'heure.
@@ -103,15 +103,15 @@ def annees(debut: datetime, fin: datetime) -> float:
     return (fin.astimezone(utc) - debut.astimezone(utc)).total_seconds() / SECONDES_PAR_AN
 
 
-def maturite(expiration, valo: datetime) -> float:
+def maturity(expiration, valo: datetime) -> float:
     """Temps jusqu'à l'expiration (16:00 New York le jour d'échéance), en années."""
-    return annees(valo, instant(expiration, HEURE_EXPIRATION))
+    return year_fraction(valo, market_time(expiration, HEURE_EXPIRATION))
 
 
 # --------------------------------------------------------------------------- #
 # Chargement des données
 # --------------------------------------------------------------------------- #
-def telecharger_yahoo(ticker: str, nb_echeances: int):
+def download_yahoo(ticker: str, nb_echeances: int):
     import yfinance as yf
     tk = yf.Ticker(ticker)
     hist = tk.history(period="1d", interval="1m")
@@ -119,14 +119,14 @@ def telecharger_yahoo(ticker: str, nb_echeances: int):
         spot = float(hist["Close"].iloc[-1])
         # Une barre d'une minute est horodatée à son début : le cours de clôture
         # de la barre correspond à la minute suivante.
-        valo = hist.index[-1].to_pydatetime().astimezone(fuseau()) + timedelta(minutes=1)
+        valo = hist.index[-1].to_pydatetime().astimezone(market_tz()) + timedelta(minutes=1)
     else:
         spot = float(tk.fast_info["last_price"])
-        valo = datetime.now(fuseau())
+        valo = datetime.now(market_tz())
     today = valo.date()
     lignes = []
     exps = [e for e in tk.options
-            if JOURS_MIN <= maturite(e, valo) * 365 <= JOURS_MAX]
+            if JOURS_MIN <= maturity(e, valo) * 365 <= JOURS_MAX]
     # échéances réparties sur la courbe plutôt que les N premières
     if len(exps) > nb_echeances:
         idx = np.unique(np.linspace(0, len(exps) - 1, nb_echeances).round().astype(int))
@@ -163,7 +163,7 @@ def telecharger_yahoo(ticker: str, nb_echeances: int):
     return chaine, divs, spot, valo
 
 
-def charger_csv(chemin_chaine, chemin_div):
+def load_csv(chemin_chaine, chemin_div):
     chaine = pd.read_csv(chemin_chaine)
     chaine["type"] = chaine["type"].str.lower().str.strip()
     divs = pd.read_csv(chemin_div) if chemin_div else pd.DataFrame(columns=["ex_date", "montant"])
@@ -173,7 +173,7 @@ def charger_csv(chemin_chaine, chemin_div):
 # --------------------------------------------------------------------------- #
 # Calculs
 # --------------------------------------------------------------------------- #
-def divs_pour(divs: pd.DataFrame, valo: datetime, T: float):
+def divs_for(divs: pd.DataFrame, valo: datetime, T: float):
     """
     Dividendes (t en années, montant) encore à détacher avant l'échéance.
     Détachement à l'ouverture du jour ex-dividende : un dividende dont l'ex-date
@@ -181,7 +181,7 @@ def divs_pour(divs: pd.DataFrame, valo: datetime, T: float):
     """
     out = []
     for _, d in divs.iterrows():
-        t = annees(valo, instant(d["ex_date"], HEURE_DETACHEMENT))
+        t = year_fraction(valo, market_time(d["ex_date"], HEURE_DETACHEMENT))
         if 0 < t <= T:
             out.append((t, float(d["montant"])))
     return out
@@ -191,9 +191,9 @@ def forward(S, T, r, q, dv):
     return S * math.exp((r - q) * T) - sum(D * math.exp((r - q) * (T - t)) for t, D in dv)
 
 
-def vol_implicite(prix, S, K, T, r, q, kind, dv):
+def implied_vol(prix, S, K, T, r, q, kind, dv):
     """None si le prix est hors des bornes du modèle (arbitrage ou donnée sale)."""
-    f = lambda v: prix_americain_div(S, K, T, r, q, v, kind, dv, n=N_PAS) - prix
+    f = lambda v: american_price_div(S, K, T, r, q, v, kind, dv, n=N_PAS) - prix
     # Borne basse : au-dessous de |r-q|·√dt, la probabilité de l'arbre sort de ]0, 1[
     v_min = max(VOL_MIN, 1.001 * sigma_min_crr(r, q, T, N_PAS))
     if v_min >= VOL_MAX:
@@ -204,7 +204,7 @@ def vol_implicite(prix, S, K, T, r, q, kind, dv):
     return brentq(f, v_min, VOL_MAX, xtol=1e-5)
 
 
-def caler_borrow(df_e, S, T, r, dv):
+def calibrate_borrow(df_e, S, T, r, dv):
     """Coût d'emprunt q tel que vol(call) = vol(put) sur les strikes proches de la monnaie."""
     F0 = forward(S, T, r, 0.0, dv)
     paires = df_e.pivot_table(index="strike", columns="type", values="mid").dropna()
@@ -214,8 +214,8 @@ def caler_borrow(df_e, S, T, r, dv):
     estimations = []
     for K in ks:
         def ecart(q):
-            vc = vol_implicite(paires.loc[K, "call"], S, K, T, r, q, "call", dv)
-            vp = vol_implicite(paires.loc[K, "put"], S, K, T, r, q, "put", dv)
+            vc = implied_vol(paires.loc[K, "call"], S, K, T, r, q, "call", dv)
+            vp = implied_vol(paires.loc[K, "put"], S, K, T, r, q, "put", dv)
             if vc is None or vp is None:
                 return np.nan
             return vc - vp
@@ -223,11 +223,11 @@ def caler_borrow(df_e, S, T, r, dv):
         # (aux bornes extrêmes, l'une des deux vols peut ne plus être inversible)
         # Aux échéances courtes, un petit décalage de forward (cours décalé de
         # quelques centimes) se traduit par un borrow annualisé élevé : grille large.
-        grille = [0.0, -0.01, 0.01, -0.03, 0.03, -0.06, 0.06, -0.10, 0.10,
+        param_grid = [0.0, -0.01, 0.01, -0.03, 0.03, -0.06, 0.06, -0.10, 0.10,
                   -0.15, 0.15, -0.25, 0.25, -0.40, 0.40]
-        grille = sorted(grille)
-        vals = [ecart(x) for x in grille]
-        for (x0, f0), (x1, f1) in zip(zip(grille, vals), zip(grille[1:], vals[1:])):
+        param_grid = sorted(param_grid)
+        vals = [ecart(x) for x in param_grid]
+        for (x0, f0), (x1, f1) in zip(zip(param_grid, vals), zip(param_grid[1:], vals[1:])):
             if np.isfinite(f0) and np.isfinite(f1) and f0 * f1 <= 0:
                 try:
                     estimations.append(brentq(ecart, x0, x1, xtol=1e-4))
@@ -237,7 +237,7 @@ def caler_borrow(df_e, S, T, r, dv):
     return float(np.median(estimations)) if estimations else 0.0
 
 
-def ajuster_smile(x, iv, poids):
+def fit_smile(x, iv, poids):
     """Smile lisse : polynôme en log-moneyness (degré 2, ou 3 si assez de points)."""
     deg = 3 if len(x) >= 10 else 2 if len(x) >= 4 else 1
     return np.polynomial.polynomial.Polynomial.fit(x, iv, deg, w=poids)
@@ -246,7 +246,7 @@ def ajuster_smile(x, iv, poids):
 # --------------------------------------------------------------------------- #
 # Graphique : smiles par échéance (petits multiples)
 # --------------------------------------------------------------------------- #
-def tracer(res: pd.DataFrame, nom: str, libelle_smile: str = "Smile ajusté"):
+def plot_results(res: pd.DataFrame, nom: str, libelle_smile: str = "Smile ajusté"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -319,25 +319,25 @@ def main():
     t0 = time.time()
     if a.ticker:
         print(f"Téléchargement de la chaîne {a.ticker} (Yahoo Finance, données différées)…")
-        chaine, divs, spot, valo = telecharger_yahoo(a.ticker, a.nb_echeances)
+        chaine, divs, spot, valo = download_yahoo(a.ticker, a.nb_echeances)
         today = valo.date()
         nom = a.nom or a.ticker
         chaine.to_csv(f"chaine_{nom}_{today}.csv", index=False)
         divs.to_csv(f"dividendes_{nom}_{today}.csv", index=False)
     elif a.chaine and a.spot:
-        chaine, divs = charger_csv(a.chaine, a.dividendes)
+        chaine, divs = load_csv(a.chaine, a.dividendes)
         spot = a.spot
         if a.date:
-            valo = instant(a.date, heure_du_jour.fromisoformat(a.heure))
+            valo = market_time(a.date, heure_du_jour.fromisoformat(a.heure))
         else:
-            valo = datetime.now(fuseau())
+            valo = datetime.now(market_tz())
         today = valo.date()
         nom = a.nom or "chaine"
     else:
         ap.error("donnez --ticker, ou --chaine et --spot")
 
     r = a.taux
-    chaine["T"] = chaine["expiration"].map(lambda e: maturite(e, valo))
+    chaine["T"] = chaine["expiration"].map(lambda e: maturity(e, valo))
     chaine["jours"] = 365.0 * chaine["T"]          # jours calendaires, fractionnaires
     chaine["mid"] = (chaine["bid"] + chaine["ask"]) / 2
     n0 = len(chaine)
@@ -351,12 +351,12 @@ def main():
     resultats, resume, svis = [], [], []
     for e, df_e in chaine.groupby("expiration"):
         T = float(df_e["T"].iloc[0])
-        dv = divs_pour(divs, valo, T)
-        q = 0.0 if a.sans_borrow else caler_borrow(df_e, spot, T, r, dv)
+        dv = divs_for(divs, valo, T)
+        q = 0.0 if a.sans_borrow else calibrate_borrow(df_e, spot, T, r, dv)
         F = forward(spot, T, r, q, dv)
         df_e = df_e[(df_e.strike / F).between(*MONEYNESS)].copy()
         for col, px in (("iv_bid", "bid"), ("iv_mid", "mid"), ("iv_ask", "ask")):
-            df_e[col] = [vol_implicite(p, spot, K, T, r, q, k, dv)
+            df_e[col] = [implied_vol(p, spot, K, T, r, q, k, dv)
                          for p, K, k in zip(df_e[px], df_e.strike, df_e.type)]
         df_e[["iv_bid", "iv_mid", "iv_ask"]] = df_e[["iv_bid", "iv_mid", "iv_ask"]].astype(float)
         df_e["x"] = np.log(df_e.strike / F)
@@ -368,14 +368,14 @@ def main():
         if len(otm) >= 3:
             largeur = (otm.iv_ask.fillna(otm.iv_mid + 0.02) - otm.iv_bid.fillna(otm.iv_mid - 0.02)).clip(lower=1e-3)
             if a.smile == "svi":
-                smile = caler_svi(otm.x.values, otm.iv_mid.values, T, 1 / largeur.values)
+                smile = calibrate_svi(otm.x.values, otm.iv_mid.values, T, 1 / largeur.values)
                 svis.append((e, smile, float(otm.x.min()), float(otm.x.max())))
             else:
-                smile = ajuster_smile(otm.x.values, otm.iv_mid.values, 1 / largeur.values)
+                smile = fit_smile(otm.x.values, otm.iv_mid.values, 1 / largeur.values)
             lo, hi = otm.x.min(), otm.x.max()
             dedans = df_e.x.between(lo, hi)
             df_e.loc[dedans, "iv_smile"] = smile(df_e.loc[dedans, "x"].values)
-            prix_smile = [prix_americain_div(spot, K, T, r, q, v, k, dv, n=N_PAS) if np.isfinite(v) else np.nan
+            prix_smile = [american_price_div(spot, K, T, r, q, v, k, dv, n=N_PAS) if np.isfinite(v) else np.nan
                           for K, v, k in zip(df_e.strike, df_e.iv_smile, df_e.type)]
             df_e["prix_smile"] = prix_smile
             valide = df_e.prix_smile.notna()
@@ -398,7 +398,7 @@ def main():
               f"| dans la fourchette {resume[-1]['dans_fourchette']:.0%} "
               f"| écart vol call/put {resume[-1]['ecart_call_put_pts']:.2f} pt "
               f"| hors bornes {hors_bornes}"
-              + (f" | papillon {'OK' if arbitrage_papillon(svis[-1][1])[0] else 'ARBITRAGE'}"
+              + (f" | papillon {'OK' if butterfly_arbitrage(svis[-1][1])[0] else 'ARBITRAGE'}"
                  if a.smile == "svi" and svis and svis[-1][0] == e else ""))
 
     res = pd.concat(resultats)
@@ -416,12 +416,12 @@ def main():
     if a.smile == "svi" and svis:
         params = pd.DataFrame([dict(echeance=e, T=sv.T, a=sv.a, b=sv.b, rho=sv.rho, m=sv.m, s=sv.s,
                                     vol_atm=float(sv.vol(0.0)),
-                                    papillon_ok=arbitrage_papillon(sv)[0],
-                                    g_min=arbitrage_papillon(sv)[1]) for e, sv, _, _ in svis])
+                                    papillon_ok=butterfly_arbitrage(sv)[0],
+                                    g_min=butterfly_arbitrage(sv)[1]) for e, sv, _, _ in svis])
         params.to_csv(f"svi_params_{nom}.csv", index=False)
         liste = [sv for _, sv, _, _ in svis]
-        cal_cote = arbitrage_calendaire(liste, plages=[(lo, hi) for _, _, lo, hi in svis])
-        cal_ailes = arbitrage_calendaire(liste, -0.5, 0.5)
+        cal_cote = calendar_arbitrage(liste, plages=[(lo, hi) for _, _, lo, hi in svis])
+        cal_ailes = calendar_arbitrage(liste, -0.5, 0.5)
         fmt = lambda c: "aucun" if not c else "; ".join(
             f"{t1 * 365:.0f}j→{t2 * 365:.0f}j à k={k:+.2f}" for t1, t2, k, _ in c)
         print(f"Arbitrage papillon (densité < 0, k ∈ [-1,5 ; 1,5]) : "
@@ -435,7 +435,7 @@ def main():
     print("  Écart call/put élevé (> 1 pt) malgré le borrow : dividendes ou taux à revoir.")
     print("  Options 'hors bornes' : prix sous la valeur minimale du modèle (donnée périmée,")
     print("  ou prime d'exercice anticipé mal captée).")
-    png = tracer(res, nom, "Smile SVI" if a.smile == "svi" else "Smile polynomial")
+    png = plot_results(res, nom, "Smile SVI" if a.smile == "svi" else "Smile polynomial")
     print(f"\nFichiers : resultats_marche_{nom}.csv, {png}  ({time.time() - t0:.0f}s)")
 
 

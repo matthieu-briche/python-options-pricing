@@ -28,15 +28,15 @@ htmlcov/
 coverage.xml
 
 # --- Sorties générées par les scripts (régénérables) ----------------------- #
-# valider_pricer.py, valider_lsm.py, valider_dividendes.py
+# validate_pricer.py, validate_lsm.py, validate_dividends.py
 rapport_*.csv
-# valider_marche.py
+# validate_market.py
 resultats_marche_*.csv
 svi_params_*.csv
 smiles_*.png
 chaine_*.csv
 dividendes_*.csv
-# generer_chaine_test.py
+# make_test_chain.py
 chaine_test.csv
 dividendes_test.csv
 

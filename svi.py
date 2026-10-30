@@ -64,7 +64,7 @@ class SVI:
         return self.a + self.b * self.s * np.sqrt(1 - self.rho ** 2)
 
 
-def caler_svi(k, iv, T, poids=None, n_essais=8, seed=0) -> SVI:
+def calibrate_svi(k, iv, T, poids=None, n_essais=8, seed=0) -> SVI:
     """
     Calage par moindres carrés pondérés sur la vol implicite, avec contraintes :
     b >= 0, |ρ| < 1, s > 0, variance minimale >= 0, b(1+|ρ|) <= 4/T (Roger Lee).
@@ -112,7 +112,7 @@ def caler_svi(k, iv, T, poids=None, n_essais=8, seed=0) -> SVI:
     return SVI(*meilleur.x, T=T)
 
 
-def arbitrage_papillon(svi: SVI, k_min=-1.5, k_max=1.5, n=601):
+def butterfly_arbitrage(svi: SVI, k_min=-1.5, k_max=1.5, n=601):
     """Renvoie (ok, g_min, k où g est minimal)."""
     k = np.linspace(k_min, k_max, n)
     g = svi.g(k)
@@ -120,7 +120,7 @@ def arbitrage_papillon(svi: SVI, k_min=-1.5, k_max=1.5, n=601):
     return bool(g[i] >= -1e-8), float(g[i]), float(k[i])
 
 
-def arbitrage_calendaire(svis: list[SVI], k_min=-0.5, k_max=0.5, n=201, plages=None):
+def calendar_arbitrage(svis: list[SVI], k_min=-0.5, k_max=0.5, n=201, plages=None):
     """
     Variance totale croissante en maturité à k fixé. Renvoie la liste des
     couples d'échéances en violation (T1, T2, k, w1 - w2 maximal).

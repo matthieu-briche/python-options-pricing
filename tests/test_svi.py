@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from svi import SVI, arbitrage_calendaire, arbitrage_papillon, caler_svi
+from svi import SVI, calendar_arbitrage, butterfly_arbitrage, calibrate_svi
 
 # Tranche « saine » : skew négatif typique d'un indice actions
 SAIN = SVI(a=0.04, b=0.4, rho=-0.4, m=0.0, s=0.1, T=1.0)
@@ -52,12 +52,12 @@ def test_derivees_analytiques_vs_differences_finies():
 # Arbitrage papillon (fonction g de Durrleman)
 # --------------------------------------------------------------------------- #
 def test_papillon_ok_sur_tranche_saine():
-    ok, g_min, _ = arbitrage_papillon(SAIN)
+    ok, g_min, _ = butterfly_arbitrage(SAIN)
     assert ok and g_min > 0
 
 
 def test_papillon_detecte_exemple_de_vogt():
-    ok, g_min, k_min = arbitrage_papillon(VOGT)
+    ok, g_min, k_min = butterfly_arbitrage(VOGT)
     assert not ok
     assert g_min < 0
     assert 0.5 < k_min < 1.2          # violation connue dans l'aile droite
@@ -90,13 +90,13 @@ def test_g_negatif_ssi_densite_negative():
 def test_calendaire_aucune_violation_si_variance_croissante():
     s1 = SVI(0.02, 0.2, -0.4, 0.0, 0.1, T=0.25)
     s2 = SVI(0.05, 0.2, -0.4, 0.0, 0.1, T=1.0)
-    assert arbitrage_calendaire([s1, s2]) == []
+    assert calendar_arbitrage([s1, s2]) == []
 
 
 def test_calendaire_detecte_croisement():
     s1 = SVI(0.06, 0.2, -0.4, 0.0, 0.1, T=0.25)   # plus de variance à échéance courte
     s2 = SVI(0.03, 0.2, -0.4, 0.0, 0.1, T=1.0)
-    v = arbitrage_calendaire([s1, s2])
+    v = calendar_arbitrage([s1, s2])
     assert len(v) == 1
     t1, t2, _, ecart = v[0]
     assert (t1, t2) == (0.25, 1.0) and ecart == pytest.approx(0.03, abs=1e-9)
@@ -105,13 +105,13 @@ def test_calendaire_detecte_croisement():
 def test_calendaire_independant_de_l_ordre_de_la_liste():
     s1 = SVI(0.06, 0.2, -0.4, 0.0, 0.1, T=0.25)
     s2 = SVI(0.03, 0.2, -0.4, 0.0, 0.1, T=1.0)
-    assert arbitrage_calendaire([s2, s1]) == arbitrage_calendaire([s1, s2])
+    assert calendar_arbitrage([s2, s1]) == calendar_arbitrage([s1, s2])
 
 
 def test_calendaire_plages_disjointes_ignorees():
     s1 = SVI(0.06, 0.2, -0.4, 0.0, 0.1, T=0.25)
     s2 = SVI(0.03, 0.2, -0.4, 0.0, 0.1, T=1.0)
-    assert arbitrage_calendaire([s1, s2], plages=[(-0.5, -0.2), (0.1, 0.4)]) == []
+    assert calendar_arbitrage([s1, s2], plages=[(-0.5, -0.2), (0.1, 0.4)]) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -124,9 +124,9 @@ def test_calendaire_plages_disjointes_ignorees():
 ])
 def test_calage_retrouve_les_vols_d_un_svi_connu(vrai):
     k = np.linspace(-0.4, 0.3, 25)
-    cale = caler_svi(k, vrai.vol(k), vrai.T)
+    cale = calibrate_svi(k, vrai.vol(k), vrai.T)
     np.testing.assert_allclose(cale.vol(k), vrai.vol(k), atol=5e-4)   # < 0,05 pt de vol
-    assert arbitrage_papillon(cale)[0]
+    assert butterfly_arbitrage(cale)[0]
 
 
 def test_calage_bruite_reste_sans_arbitrage_et_respecte_lee():
@@ -134,8 +134,8 @@ def test_calage_bruite_reste_sans_arbitrage_et_respecte_lee():
     vrai = SVI(0.03, 0.15, -0.4, 0.0, 0.2, T=0.5)
     k = np.linspace(-0.5, 0.35, 30)
     iv = vrai.vol(k) + rng.normal(0, 0.003, k.size)
-    cale = caler_svi(k, iv, vrai.T)
-    assert arbitrage_papillon(cale)[0]
+    cale = calibrate_svi(k, iv, vrai.T)
+    assert butterfly_arbitrage(cale)[0]
     assert cale.b * (1 + abs(cale.rho)) <= 4 / cale.T + 1e-6
     assert cale.min_variance() >= -1e-6
     assert np.sqrt(np.mean((cale.vol(k) - vrai.vol(k)) ** 2)) < 0.003
@@ -147,14 +147,14 @@ def test_calage_poids_privilegient_les_points_lourds():
     iv = vrai.vol(k).copy()
     iv[0] += 0.02                                    # point aberrant dans l'aile gauche
     poids = np.ones_like(k); poids[0] = 1e-3
-    cale = caler_svi(k, iv, vrai.T, poids=poids)
+    cale = calibrate_svi(k, iv, vrai.T, poids=poids)
     assert abs(cale.vol(k[0]) - vrai.vol(k[0])) < 0.005
 
 
 def test_calage_reproductible():
     k = np.linspace(-0.4, 0.3, 20)
     iv = SAIN.vol(k)
-    assert caler_svi(k, iv, 1.0, seed=3) == caler_svi(k, iv, 1.0, seed=3)
+    assert calibrate_svi(k, iv, 1.0, seed=3) == calibrate_svi(k, iv, 1.0, seed=3)
 
 
 # --------------------------------------------------------------------------- #
