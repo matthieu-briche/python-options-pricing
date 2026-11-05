@@ -1,21 +1,21 @@
 """
-dividends.py — Options américaines avec dividendes discrets (arbre CRR).
+dividends.py — American options with discrete dividends (CRR tree).
 
-Deux modèles de dividendes, les mêmes que QuantLib (FdBlackScholesVanillaEngine) :
+Two dividend models, the same as QuantLib (FdBlackScholesVanillaEngine):
 
-  model="spot"      Le cours chute de D à la date de détachement ; la volatilité
-                    s'applique au cours entier. Le plus réaliste.
-                    Implémentation : arbre CRR à grille fixe ; à chaque date de
-                    détachement, V(t-, S) = V(t+, S - D) par interpolation sur les
-                    nœuds (méthode de Vellekoop & Nieuwenhuis, 2006).
+  model="spot"      The share price drops by D on the ex-date; volatility
+                    applies to the whole price. The most realistic model.
+                    Implementation: CRR tree on a fixed grid; on each
+                    ex-date, V(t-, S) = V(t+, S - D) by interpolation on the
+                    nodes (Vellekoop & Nieuwenhuis method, 2006).
 
-  model="escrowed"  La volatilité s'applique à S* = S - VA(dividendes futurs).
-                    L'arbre porte S* ; l'exercice utilise S = S* + VA(dividendes
-                    restants). Simple, mais sous-estime la variance du cours.
+  model="escrowed"  Volatility applies to S* = S - PV(future dividends).
+                    The tree carries S*; exercise uses S = S* + PV(remaining
+                    dividends). Simple, but underestimates the price variance.
 
-Dividendes : liste de (t_i, D_i), t_i en années depuis aujourd'hui (date de
-détachement), D_i en unités de cours. Seuls ceux tels que 0 < t_i <= T comptent.
-Le taux continu q du modèle reste utilisable (repo / coût d'emprunt).
+Dividends: list of (t_i, D_i), t_i in years from today (ex-date),
+D_i in price units. Only those with 0 < t_i <= T count.
+The model's continuous rate q can still be used (repo / borrow cost).
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ Dividends = Sequence[tuple[float, float]]
 
 def _tree_value(m: BlackScholes, K: float, T: float, kind: OptionType,
                 dividends: Dividends, n: int, model: DivModel):
-    """Renvoie {pas: (S des nœuds, valeurs)} pour les pas 0, 1, 2, et dt."""
+    """Returns {step: (node S, values)} for steps 0, 1, 2, and dt."""
     dt = T / n
     u = math.exp(m.sigma * math.sqrt(dt))
     d = 1.0 / u
@@ -45,15 +45,15 @@ def _tree_value(m: BlackScholes, K: float, T: float, kind: OptionType,
     disc = math.exp(-m.r * dt)
     sgn = 1.0 if kind == "call" else -1.0
 
-    # Dividendes ramenés au pas de temps le plus proche (pas >= 1)
+    # Dividends moved to the nearest time step (step >= 1)
     divs = [(min(max(round(t / dt), 1), n), D) for t, D in dividends if 0 < t <= T and D > 0]
     div_at = {}
     for k, D in divs:
         div_at[k] = div_at.get(k, 0.0) + D
 
     if model == "escrowed":
-        # VA, à la date du pas k, des dividendes encore à recevoir (pas >= k : cum-dividende)
-        pv = np.zeros(n + 1)            # pv[k] : VA en t_k des dividendes aux pas >= k
+        # PV, at the date of step k, of the dividends still to be received (step >= k: cum-dividend)
+        pv = np.zeros(n + 1)            # pv[k]: PV at t_k of the dividends at steps >= k
         for kd, D in div_at.items():
             ks = np.arange(kd + 1)
             pv[ks] += D * np.exp(-m.r * (kd - ks) * dt)
@@ -62,7 +62,7 @@ def _tree_value(m: BlackScholes, K: float, T: float, kind: OptionType,
             return pv[k]
         base = m.s0 - pv_remaining(0)
         if base <= 0:
-            raise ValueError("Dividendes supérieurs au cours : modèle escrowed impossible")
+            raise ValueError("Dividends exceed the share price: escrowed model not possible")
     else:
         base = m.s0
 
@@ -85,7 +85,7 @@ def _tree_value(m: BlackScholes, K: float, T: float, kind: OptionType,
 
 
 def _tree_spot(m, K, T, kind, dividends, n):
-    """Modèle spot : grille fixe + saut de dividende par interpolation."""
+    """Spot model: fixed grid + dividend jump by interpolation."""
     dt = T / n
     u = math.exp(m.sigma * math.sqrt(dt))
     d = 1.0 / u
@@ -103,12 +103,12 @@ def _tree_spot(m, K, T, kind, dividends, n):
         return m.s0 * u ** (2.0 * np.arange(k + 1) - k)
 
     def jump(k, s_k, v_ex):
-        """V(t_k^-, S) = V(t_k^+, S - D) ; exercice possible juste avant détachement."""
+        """V(t_k^-, S) = V(t_k^+, S - D); exercise possible just before the ex-date."""
         D = div_at[k]
         x = s_k - D
-        # Interpolation cubique (une interpolation linéaire surestime une fonction
-        # convexe : biais ~ gamma·h²/8 par dividende). Sous le plus petit nœud,
-        # prolongement linéaire vers la valeur en S=0 (0 pour un call, K pour un put).
+        # Cubic interpolation (linear interpolation overestimates a convex
+        # function: bias ~ gamma·h²/8 per dividend). Below the smallest node,
+        # linear extension towards the value at S=0 (0 for a call, K for a put).
         v_cum = np.empty_like(x)
         inside = x >= s_k[0]
         if inside.any():
@@ -139,30 +139,30 @@ def _tree(m, K, T, kind, dividends, n, model):
         return _tree_spot(m, K, T, kind, dividends, n)
     if model == "escrowed":
         return _tree_value(m, K, T, kind, dividends, n, model)
-    raise ValueError("model doit valoir 'spot' ou 'escrowed'")
+    raise ValueError("model must be 'spot' or 'escrowed'")
 
 
 def crr_american_div(m: BlackScholes, K: float, T: float, kind: OptionType = "put",
                      dividends: Dividends = (), n: int = 2000,
                      model: DivModel = "spot") -> dict[str, float]:
     """
-    Prix et grecques d'une option américaine avec dividendes discrets.
-    Mêmes conventions que greeks.crr_american (vega pour +1.00 de vol, rho pour
-    +1.00 de taux, theta par an). Delta/gamma/theta lus sur les premiers nœuds ;
-    vega/rho par re-pricing (dividendes en montants fixes, inchangés).
-    Hypothèse : pas de détachement dans les deux premiers pas de l'arbre.
+    Price and Greeks of an American option with discrete dividends.
+    Same conventions as greeks.crr_american (vega per +1.00 of vol, rho per
+    +1.00 of rate, theta per year). Delta/gamma/theta read from the first nodes;
+    vega/rho by re-pricing (dividends as fixed, unchanged amounts).
+    Assumption: no ex-date within the first two tree steps.
 
-    Précision : prix à ~0,001 de QuantLib (n=2000). Avec un gros dividende proche
-    (ex. 5 % du cours sous un mois), le rho garde un biais de discrétisation en
-    O(1/n) d'environ 2 % ; augmentez n, ou extrapolez : rho ≈ 2·rho(2n) - rho(n).
+    Accuracy: price within ~0.001 of QuantLib (n=2000). With a large near-term dividend
+    (e.g. 5% of the price within a month), rho keeps a discretisation bias in
+    O(1/n) of about 2%; increase n, or extrapolate: rho ≈ 2·rho(2n) - rho(n).
     """
     dt0 = T / n
     precoces = [t for t, D in dividends if 0 < t <= T and D > 0 and round(t / dt0) <= 2]
     if precoces:
         warnings.warn(
-            f"Détachement dans les deux premiers pas de l'arbre (t={min(precoces):.2e} an, "
-            f"dt={dt0:.2e}) : delta, gamma et theta lus sur les premiers nœuds sont "
-            "faussés. Augmentez n ou traitez le dividende séparément.",
+            f"Ex-date within the first two tree steps (t={min(precoces):.2e} yr, "
+            f"dt={dt0:.2e}): delta, gamma and theta read from the first nodes are "
+            "distorted. Increase n or handle the dividend separately.",
             UserWarning, stacklevel=2)
     price = lambda mm: _tree(mm, K, T, kind, dividends, n, model)[0][0][1][0]
     k, dt = _tree(m, K, T, kind, dividends, n, model)
@@ -170,9 +170,9 @@ def crr_american_div(m: BlackScholes, K: float, T: float, kind: OptionType = "pu
     delta = (v1[1] - v1[0]) / (s1[1] - s1[0])
     gamma = ((v2[2] - v2[1]) / (s2[2] - s2[1]) - (v2[1] - v2[0]) / (s2[1] - s2[0])) \
         / (0.5 * (s2[2] - s2[0]))
-    # Theta : variation entre t=0 et t=2dt au nœud central. En modèle escrowed, ce
-    # nœud ne correspond pas exactement à S0 (la VA des dividendes croît avec le
-    # temps) : on retire l'effet delta du décalage de cours.
+    # Theta: change between t=0 and t=2dt at the central node. In the escrowed model, this
+    # node does not match S0 exactly (the PV of dividends grows with
+    # time): the delta effect of the price shift is removed.
     s0_node = k[0][0][0]
     theta = (v2[1] - v0[0] - delta * (s2[1] - s0_node)) / (2 * dt)
     h_sig, h_r = min(1e-2, 0.5 * m.sigma), 1e-3
@@ -186,6 +186,6 @@ def crr_american_div(m: BlackScholes, K: float, T: float, kind: OptionType = "pu
 def american_price_div(S: float, K: float, T: float, r: float, q: float, sigma: float,
                        kind: OptionType, dividends: Dividends = (), n: int = 400,
                        model: DivModel = "spot") -> float:
-    """Prix seul (sans grecques), interface à plat : utile pour inverser la vol implicite."""
+    """Price only (no Greeks), flat interface: useful for inverting implied vol."""
     m = BlackScholes(s0=S, r=r, sigma=sigma, q=q)
     return float(_tree(m, K, T, kind, dividends, n, model)[0][0][1][0])

@@ -1,20 +1,20 @@
-"""Fixtures et helpers partagés.
+"""Shared fixtures and helpers.
 
-Philosophie des tests Monte Carlo :
-  - seeds FIXES -> tests déterministes (jamais de test « flaky » en CI) ;
-  - un estimateur est jugé correct si la référence exacte est à moins de
-    N_SIGMA écarts-types (4σ : faux échec ~ 6e-5 si on changeait la seed) ;
-  - on teste aussi la réduction de variance (std_error) et pas seulement le prix.
+Monte Carlo testing philosophy:
+  - FIXED seeds -> deterministic tests (never a "flaky" test in CI);
+  - an estimator is judged correct if the exact reference is within
+    N_SIGMA standard deviations (4σ: false failure ~ 6e-5 if the seed changed);
+  - variance reduction (std_error) is tested too, not only the price.
 """
 import math
 import sys
 from pathlib import Path
 
-# pricer.py / greeks.py importables quelle que soit la façon de lancer les tests
-_SRC = str(Path(__file__).resolve().parents[1])  # dossier racine du projet
+# pricer.py / greeks.py importable however the tests are launched
+_SRC = str(Path(__file__).resolve().parents[1])  # project root folder
 if _SRC in sys.path:
     sys.path.remove(_SRC)
-sys.path.insert(0, _SRC)  # en 1re position : priorité sur tout autre module « pricer »
+sys.path.insert(0, _SRC)  # first position: takes priority over any other "pricer" module
 
 import pytest
 
@@ -34,15 +34,15 @@ def model_div() -> BlackScholes:
 
 
 def assert_mc_close(res, ref: float, n_sigma: float = N_SIGMA, atol: float = 0.0) -> None:
-    """|estimation - référence| <= n_sigma * std_error + atol."""
+    """|estimate - reference| <= n_sigma * std_error + atol."""
     err = abs(res.price - float(ref))
     tol = n_sigma * res.std_error + atol
-    assert err <= tol, f"estimation={res.price:.6f} ref={float(ref):.6f} " \
-                       f"écart={err:.2e} > tolérance={tol:.2e} (se={res.std_error:.2e})"
+    assert err <= tol, f"estimate={res.price:.6f} ref={float(ref):.6f} " \
+                       f"diff={err:.2e} > tolerance={tol:.2e} (se={res.std_error:.2e})"
 
 
 def fd(f, x: float, h: float) -> float:
-    """Dérivée centrée."""
+    """Central derivative."""
     return (f(x + h) - f(x - h)) / (2 * h)
 
 

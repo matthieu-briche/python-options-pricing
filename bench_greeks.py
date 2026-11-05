@@ -1,7 +1,7 @@
-"""Validation + benchmark des Grecques : python bench_greeks.py"""
+"""Greeks validation + benchmark: python bench_greeks.py"""
 import sys
 from pathlib import Path
-# pricer.py et greeks.py sont dans le même dossier que ce script
+# pricer.py and greeks.py are in the same folder as this script
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import time
@@ -14,7 +14,7 @@ from pricer import BlackScholes, lsm_american_put, mc_asian_arithmetic
 
 def table(title, est, ref=None, secs=None):
     print(f"\n== {title}" + (f"  [{secs:.2f}s]" if secs is not None else "") + " ==")
-    print(f"{'':<7}{'estimation':>14}{'± IC95':>11}{'référence':>13}")
+    print(f"{'':<7}{'estimation':>14}{'± CI95':>11}{'reference':>13}")
     for g in GREEKS:
         if g not in est:
             continue
@@ -34,25 +34,25 @@ if __name__ == "__main__":
     m = BlackScholes(s0=100.0, r=0.05, sigma=0.2)
     K, T = 100.0, 1.0
 
-    # 1. Européenne : MC (une simulation) vs formules fermées
+    # 1. European: MC (a single simulation) vs closed forms
     for kind in ("call", "put"):
         est, s = run(mc_european_greeks, m, K, T, kind)
-        table(f"Européenne {kind} — MC pathwise / LR (2M)", est, bs_greeks(m, K, T, kind), s)
+        table(f"European {kind} — MC pathwise / LR (2M)", est, bs_greeks(m, K, T, kind), s)
 
-    # 2. Asiatique : estimateurs pathwise + contrôle vs différences finies CRN
-    mc_asian_greeks(m, K, T, n_paths=5_000)                       # compilation JIT
+    # 2. Asian: pathwise estimators + control vs CRN finite differences
+    mc_asian_greeks(m, K, T, n_paths=5_000)                       # JIT compilation
     est, s = run(mc_asian_greeks, m, K, T, control_variate=False)
-    table("Asiatique call — pathwise/LR SANS contrôle (500k)", est, secs=s)
+    table("Asian call — pathwise/LR WITHOUT control (500k)", est, secs=s)
     est, s = run(mc_asian_greeks, m, K, T)
     pricer = lambda mm, TT: mc_asian_arithmetic(mm, K, TT, n_paths=500_000, seed=9).price
     ref, s_fd = run(fd_greeks_crn, pricer, m, T)
-    table("Asiatique call — pathwise/LR AVEC contrôle géométrique (500k)", est, ref, s)
-    print(f"(référence = différences finies CRN, 9 pricings, {s_fd:.2f}s)")
+    table("Asian call — pathwise/LR WITH geometric control (500k)", est, ref, s)
+    print(f"(reference = CRN finite differences, 9 pricings, {s_fd:.2f}s)")
 
-    # 3. Américaine : LSM + différences finies CRN vs arbre binomial
-    print("\n[Put américain] arbre binomial de référence (2000 pas)...", flush=True)
+    # 3. American: LSM + CRN finite differences vs binomial tree
+    print("\n[American put] reference binomial tree (2000 steps)...", flush=True)
     ref, s_tree = run(crr_american, m, K, T, "put")
-    print("[Put américain] compilation Numba du noyau LSM (1re fois seulement)...", flush=True)
+    print("[American put] Numba compilation of the LSM kernel (first time only)...", flush=True)
     lsm_american_put(m, K, T, n_paths=1_000)
 
     def lsm(mm, TT, _count=[0]):
@@ -62,5 +62,5 @@ if __name__ == "__main__":
 
     est, s = run(fd_greeks_crn, lsm, m, T, rel_ds=0.02)
     print(" " * 30, end="\r")
-    table("Put américain — LSM + différences finies CRN", est, ref, s)
-    print(f"(référence = arbre CRR 2000 pas, {s_tree:.2f}s)")
+    table("American put — LSM + CRN finite differences", est, ref, s)
+    print(f"(reference = CRR tree 2000 steps, {s_tree:.2f}s)")

@@ -1,7 +1,7 @@
-"""Formules fermées : valeurs connues, parités, bornes d'arbitrage, EDP, propriétés."""
+"""Closed forms: known values, parities, arbitrage bounds, PDE, properties."""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # pour "from conftest import"
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for "from conftest import"
 
 import math
 from dataclasses import FrozenInstanceError, replace
@@ -16,7 +16,7 @@ from greeks import bs_greeks, geometric_asian_greeks
 from pricer import BlackScholes, bs_delta_vega, bs_price, geometric_asian_price
 
 # --------------------------------------------------------------------------- #
-# Modèle
+# Model
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("kwargs", [dict(s0=0, r=0.0, sigma=0.2), dict(s0=-1, r=0.0, sigma=0.2),
                                     dict(s0=100, r=0.0, sigma=0.0), dict(s0=100, r=0.0, sigma=-0.1)])
@@ -31,10 +31,10 @@ def test_model_is_immutable(model):
 
 
 # --------------------------------------------------------------------------- #
-# Prix Black–Scholes
+# Black–Scholes price
 # --------------------------------------------------------------------------- #
 def test_bs_reference_values(model):
-    # Valeurs de référence classiques (Hull) : S=K=100, r=5 %, sigma=20 %, T=1
+    # Classic reference values (Hull): S=K=100, r=5%, sigma=20%, T=1
     assert bs_price(model, 100, 1.0, "call") == pytest.approx(10.450583572185565, abs=1e-10)
     assert bs_price(model, 100, 1.0, "put") == pytest.approx(5.573526022256971, abs=1e-10)
 
@@ -57,10 +57,10 @@ def test_vectorized_matches_scalar(model):
 
 
 def test_limits(model):
-    # Strike très bas : call ≈ forward actualisé - K e^{-rT} ; put ≈ 0
+    # Very low strike: call ≈ discounted forward - K e^{-rT}; put ≈ 0
     assert bs_price(model, 1e-6, 1.0, "call") == pytest.approx(100 - 1e-6 * math.exp(-0.05), rel=1e-9)
     assert bs_price(model, 1e-6, 1.0, "put") == pytest.approx(0.0, abs=1e-12)
-    # Maturité ≈ 0 : valeur intrinsèque
+    # Maturity ≈ 0: intrinsic value
     assert bs_price(model, 90, 1e-10, "call") == pytest.approx(10.0, abs=1e-6)
     assert bs_price(model, 110, 1e-10, "put") == pytest.approx(10.0, abs=1e-6)
 
@@ -81,14 +81,14 @@ def test_no_arbitrage_bounds(s0, K, T, r, q, sigma):
 @given(K=st.floats(50, 150), sigma=st.floats(0.05, 0.8))
 def test_monotonicity(K, sigma):
     m = BlackScholes(100.0, 0.03, sigma)
-    eps = 1e-12 * 100.0      # très dans la monnaie, Vega ≈ 0 : égalité à l'arrondi près
-    # Call décroissant en K, prix croissant en sigma
+    eps = 1e-12 * 100.0      # deep in the money, Vega ≈ 0: equal up to rounding
+    # Call decreasing in K, price increasing in sigma
     assert bs_price(m, K, 1.0) >= bs_price(m, K + 1, 1.0) - eps
     assert bs_price(replace(m, sigma=sigma + 0.01), K, 1.0) >= bs_price(m, K, 1.0) - eps
 
 
 # --------------------------------------------------------------------------- #
-# Grecques fermées
+# Closed-form Greeks
 # --------------------------------------------------------------------------- #
 CASES = [(100.0, 1.0), (80.0, 0.5), (130.0, 2.0), (100.0, 0.05)]
 
@@ -147,11 +147,11 @@ def test_greek_signs(K, T, kind):
 
 
 # --------------------------------------------------------------------------- #
-# Asiatique géométrique
+# Geometric Asian
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("kind", ["call", "put"])
 def test_geometric_asian_one_date_is_european(model_div, kind):
-    """n = 1 : la moyenne se réduit à S_T -> prix ET Grecques = Black–Scholes."""
+    """n = 1: the average reduces to S_T -> price AND Greeks = Black–Scholes."""
     m = model_div
     assert geometric_asian_price(m, 105, 1.5, 1, kind) == pytest.approx(float(bs_price(m, 105, 1.5, kind)), rel=1e-12)
     geo = geometric_asian_greeks(m, 105, 1.5, 1, kind)
@@ -172,10 +172,10 @@ def test_geometric_asian_parity(model_div, n):
 
 
 def test_geometric_asian_cheaper_than_european(model):
-    # La moyenne réduit la variance -> option ATM moins chère
+    # Averaging reduces variance -> cheaper ATM option
     assert geometric_asian_price(model, 100, 1, 52) < float(bs_price(model, 100, 1))
 
 
 if __name__ == "__main__":
-    # Lancement direct (python fichier.py / bouton ▶ de VS Code) -> on passe par pytest
+    # Direct launch (python file.py / VS Code ▶ button) -> go through pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

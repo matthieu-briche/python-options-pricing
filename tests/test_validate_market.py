@@ -1,12 +1,12 @@
 """
-Tests des fonctions pures de validate_market.py (sans réseau ni graphique).
+Tests of the pure functions of validate_market.py (no network, no plots).
 
-download_yahoo et tracer ne sont pas testés : dépendance réseau et sortie
-graphique, faible valeur pour un test unitaire.
+download_yahoo and plotting are not tested: network dependency and graphical
+output, low value for a unit test.
 """
 import sys
 from pathlib import Path
-# Lancement direct (bouton ▶ de VS Code) : rend importables les modules de la racine du projet
+# Direct launch (VS Code ▶ button): makes the project root modules importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import math
 from datetime import date, datetime, time, timedelta
@@ -20,7 +20,7 @@ import validate_market as vm                                     # noqa: E402
 from dividends import american_price_div                       # noqa: E402
 
 NY = vm.market_tz()
-CLOTURE = datetime(2026, 10, 6, 16, 0, tzinfo=NY)       # valorisation à la clôture
+CLOTURE = datetime(2026, 10, 6, 16, 0, tzinfo=NY)       # valuation at the close
 UN_JOUR = 1 / 365
 
 S, R = 227.5, 0.04
@@ -29,26 +29,26 @@ DIVS = pd.DataFrame({"ex_date": ["2026-09-01", "2026-11-10", "2027-02-09", "2027
 
 
 # --------------------------------------------------------------------------- #
-# Mesure du temps
+# Time measurement
 # --------------------------------------------------------------------------- #
 def test_maturite_de_cloture_a_cloture_en_jours_entiers():
     assert vm.maturity("2026-10-14", CLOTURE) == pytest.approx(8 * UN_JOUR, abs=1e-12)
 
 
 def test_maturite_en_cours_de_seance():
-    """Relevé à 11:00 : il reste 8 jours et 5 heures jusqu'à l'expiration de 16:00."""
+    """Snapshot at 11:00: 8 days and 5 hours remain until the 16:00 expiry."""
     valo = datetime(2026, 10, 6, 11, 0, tzinfo=NY)
     assert vm.maturity("2026-10-14", valo) == pytest.approx((8 + 5 / 24) * UN_JOUR, abs=1e-12)
 
 
 def test_maturite_independante_du_fuseau_de_l_ordinateur():
-    """Le même instant exprimé à Paris donne la même maturité."""
-    valo_paris = datetime(2026, 10, 6, 22, 0, tzinfo=vm.ZoneInfo("Europe/Paris"))   # = 16:00 à New York
+    """The same instant expressed in Paris gives the same maturity."""
+    valo_paris = datetime(2026, 10, 6, 22, 0, tzinfo=vm.ZoneInfo("Europe/Paris"))   # = 16:00 in New York
     assert vm.maturity("2026-10-14", valo_paris) == pytest.approx(8 * UN_JOUR, abs=1e-12)
 
 
 def test_maturite_traverse_le_changement_d_heure():
-    """Fin de l'heure d'été à New York le 1er novembre 2026 : la semaine dure une heure de plus."""
+    """End of daylight saving time in New York on 1 November 2026: the week lasts one hour more."""
     valo = datetime(2026, 10, 30, 16, 0, tzinfo=NY)
     assert vm.maturity("2026-11-06", valo) == pytest.approx((7 + 1 / 24) * UN_JOUR, abs=1e-12)
 
@@ -61,19 +61,19 @@ def test_instant_accepte_date_chaine_et_datetime():
 
 
 # --------------------------------------------------------------------------- #
-# divs_for et forward
+# divs_for and forward
 # --------------------------------------------------------------------------- #
 def test_divs_pour_garde_seulement_ceux_avant_echeance():
     dv = vm.divs_for(DIVS, CLOTURE, 0.5)
-    # 2026-09-01 est passé, 2027-12-01 est après l'échéance
+    # 2026-09-01 is in the past, 2027-12-01 is after expiry
     assert [round(t * 365) for t, _ in dv] == [35, 126]
     assert all(D == 0.26 for _, D in dv)
 
 
 def test_divs_pour_detachement_a_l_ouverture():
     """
-    Valorisation à la clôture, ex-date 35 jours plus tard à 09:30 : 35 j - 6 h 30,
-    plus 1 h car on traverse la fin de l'heure d'été (1er novembre).
+    Valuation at the close, ex-date 35 days later at 09:30: 35 d - 6 h 30,
+    plus 1 h for crossing the end of daylight saving time (1 November).
     """
     divs = pd.DataFrame({"ex_date": ["2026-11-10 00:00:00"], "montant": [0.5]})
     attendu = (35 - 6.5 / 24 + 1 / 24) * UN_JOUR
@@ -82,7 +82,7 @@ def test_divs_pour_detachement_a_l_ouverture():
 
 @pytest.mark.parametrize("heure, attendu", [(time(9, 0), 1), (time(10, 0), 0)])
 def test_dividende_du_jour_avant_ou_apres_l_ouverture(heure, attendu):
-    """Ex-date aujourd'hui : encore à venir avant 09:30, déjà détaché après."""
+    """Ex-date today: still to come before 09:30, already gone after."""
     divs = pd.DataFrame({"ex_date": ["2026-10-06"], "montant": [0.5]})
     valo = datetime.combine(date(2026, 10, 6), heure, tzinfo=NY)
     assert len(vm.divs_for(divs, valo, 1.0)) == attendu
@@ -118,19 +118,19 @@ def test_vol_implicite_aller_retour(K, T, sig, q, kind):
 
 
 def test_vol_implicite_none_sous_la_valeur_intrinseque():
-    """Prix sous l'intrinsèque d'un put américain : aucune vol ne le reproduit."""
+    """Price below an American put's intrinsic value: no vol reproduces it."""
     assert vm.implied_vol(25.0, S, 260.0, 0.5, R, 0.0, "put", []) is None
 
 
 def test_vol_implicite_none_au_dessus_du_maximum():
-    """Un call ne peut pas valoir plus que le sous-jacent."""
+    """A call cannot be worth more than the underlying."""
     assert vm.implied_vol(S + 1.0, S, 220.0, 0.5, R, 0.0, "call", []) is None
 
 
 def test_vol_implicite_avec_borrow_extreme():
     """
-    Régression : avec q = -40 %, l'arbre évalué à VOL_MIN avait p > 1. Depuis le
-    contrôle de p, la borne basse de recherche est relevée à |r-q|·√dt.
+    Regression: with q = -40%, the tree evaluated at VOL_MIN had p > 1. Since the
+    check on p, the lower search bound is raised to |r-q|·√dt.
     """
     T, q, sig = 1.2, -0.40, 0.30
     prix = american_price_div(S, 230.0, T, R, q, sig, "put", [], n=vm.N_PAS)
@@ -163,7 +163,7 @@ def test_caler_borrow_sans_paire_renvoie_zero():
 
 
 # --------------------------------------------------------------------------- #
-# fit_smile (variante polynomiale)
+# fit_smile (polynomial variant)
 # --------------------------------------------------------------------------- #
 def test_ajuster_smile_reproduit_un_polynome():
     x = np.linspace(-0.3, 0.3, 12)
@@ -180,6 +180,6 @@ def test_ajuster_smile_degre_selon_nombre_de_points(n, deg):
 
 
 if __name__ == "__main__":
-    # Lancement direct (python fichier.py / bouton ▶ de VS Code) -> on passe par pytest
+    # Direct launch (python file.py / VS Code ▶ button) -> go through pytest
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

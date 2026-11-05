@@ -1,29 +1,29 @@
 """
-pricer.py — Pricing d'options financières optimisé CPU.
+pricer.py — CPU-optimised option pricing.
 
-Méthodes inspirées de G. Pagès, *Numerical Probability* (Springer, 2018) :
-  - Ch. 2  : Monte Carlo + intervalle de confiance, Greeks (méthode pathwise / tangente)
-  - Ch. 3  : réduction de variance (antithétique, variable de contrôle à beta optimal)
-  - Ch. 4  : quasi-Monte Carlo randomisé (Sobol brouillé)
-  - Ch. 7-8: options path-dependent (asiatiques) par schéma exact de Black–Scholes
-  - Ch. 12 : options américaines par régression (Longstaff–Schwartz)
+Methods drawn from G. Pagès, *Numerical Probability* (Springer, 2018):
+  - Ch. 2  : Monte Carlo + confidence interval, Greeks (pathwise / tangent method)
+  - Ch. 3  : variance reduction (antithetic, control variate with optimal beta)
+  - Ch. 4  : randomised quasi-Monte Carlo (scrambled Sobol)
+  - Ch. 7-8: path-dependent (Asian) options with the exact Black–Scholes scheme
+  - Ch. 12 : American options by regression (Longstaff–Schwartz)
 
-Principes d'optimisation CPU appliqués :
-  1. Vectorisation NumPy (aucune boucle Python sur les trajectoires).
-  2. Noyaux Numba @njit(parallel=True, fastmath=True) pour les boucles en temps
-     (path-dependent) -> code machine, multi-cœur, sans matrice (n_paths, n_steps).
-  3. Traitement par blocs (chunks) : mémoire bornée, données dans le cache CPU.
-  4. float64 contigu, opérations in-place, pas d'allocations inutiles.
-  5. RNG moderne (PCG64) avec SeedSequence -> reproductible et parallélisable.
-  6. Réduction de variance = le meilleur "optimiseur CPU" : diviser la variance
-     par 10 équivaut à diviser le nombre de simulations (donc le temps) par 10.
+CPU optimisation principles applied:
+  1. NumPy vectorisation (no Python loop over the paths).
+  2. Numba kernels @njit(parallel=True, fastmath=True) for time loops
+     (path-dependent) -> machine code, multi-core, no (n_paths, n_steps) matrix.
+  3. Chunked processing: bounded memory, data stays in the CPU cache.
+  4. Contiguous float64, in-place operations, no needless allocations.
+  5. Modern RNG (PCG64) with SeedSequence -> reproducible and parallelisable.
+  6. Variance reduction = the best "CPU optimiser": dividing the variance
+     by 10 is the same as dividing the number of simulations (hence the time) by 10.
 """
 from __future__ import annotations
 
 if __name__ == "__main__":
-    # Fichier lancé directement (python pricer.py / bouton ▶ de VS Code) : on exécute la
-    # démo via le module importé "pricer" et non via "__main__", car le cache Numba
-    # est lié au nom du module.
+    # File run directly (python pricer.py / VS Code ▶ button): the demo runs through
+    # the imported "pricer" module and not "__main__", because the Numba cache
+    # is tied to the module name.
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).resolve().parent))
@@ -45,11 +45,11 @@ Z95 = 1.959963984540054
 
 
 # --------------------------------------------------------------------------- #
-# Modèle et résultat
+# Model and result
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class BlackScholes:
-    """Modèle de Black–Scholes : dS = S((r - q)dt + sigma dW)."""
+    """Black–Scholes model: dS = S((r - q)dt + sigma dW)."""
     s0: float
     r: float
     sigma: float
@@ -57,25 +57,25 @@ class BlackScholes:
 
     def __post_init__(self) -> None:
         if self.s0 <= 0 or self.sigma <= 0:
-            raise ValueError("s0 et sigma doivent être > 0")
+            raise ValueError("s0 and sigma must be > 0")
 
 
 def check_proba_crr(p: float, m: BlackScholes, dt: float) -> None:
     """
-    Arbre CRR : la probabilité risque-neutre doit être dans ]0, 1[, sinon l'arbre
-    produit des prix sans signification (arbitrage dans l'arbre). Avec u = e^{σ√dt},
-    c'est équivalent (exactement) à  σ > |r - q| · √dt.
+    CRR tree: the risk-neutral probability must lie in (0, 1), otherwise the tree
+    produces meaningless prices (arbitrage in the tree). With u = e^{σ√dt},
+    this is exactly equivalent to  σ > |r - q| · √dt.
     """
     if not 0.0 < p < 1.0:
         raise ValueError(
-            f"Arbre CRR : probabilité p={p:.4f} hors de ]0, 1[ "
+            f"CRR tree: probability p={p:.4f} outside (0, 1) "
             f"(sigma={m.sigma}, r-q={m.r - m.q:+.4f}, dt={dt:.2e}). "
-            f"Il faut sigma > |r-q|·√dt = {abs(m.r - m.q) * math.sqrt(dt):.4g} : "
-            "augmenter n ou vérifier les paramètres.")
+            f"sigma > |r-q|·√dt = {abs(m.r - m.q) * math.sqrt(dt):.4g} is required: "
+            "increase n or check the parameters.")
 
 
 def sigma_min_crr(r: float, q: float, T: float, n: int) -> float:
-    """Plus petite volatilité acceptée par un arbre CRR à n pas (voir check_proba_crr)."""
+    """Smallest volatility accepted by an n-step CRR tree (see check_proba_crr)."""
     return abs(r - q) * math.sqrt(T / n)
 
 
@@ -92,11 +92,11 @@ class MCResult:
 
     def __str__(self) -> str:
         lo, hi = self.ci95
-        return f"{self.price:.6f} ± {Z95*self.std_error:.6f}  (IC95 [{lo:.6f}, {hi:.6f}], N={self.n_paths:,})"
+        return f"{self.price:.6f} ± {Z95*self.std_error:.6f}  (CI95 [{lo:.6f}, {hi:.6f}], N={self.n_paths:,})"
 
 
 class _RunningStats:
-    """Moyenne/variance en ligne par blocs (Chan et al.) : mémoire O(1)."""
+    """Online mean/variance by blocks (Chan et al.): O(1) memory."""
     __slots__ = ("n", "mean", "m2")
 
     def __init__(self) -> None:
@@ -118,10 +118,10 @@ class _RunningStats:
 
 
 # --------------------------------------------------------------------------- #
-# 1. Formules fermées (référence + variables de contrôle) — vectorisées
+# 1. Closed forms (reference + control variates) — vectorised
 # --------------------------------------------------------------------------- #
 def bs_price(m: BlackScholes, K, T, kind: OptionType = "call"):
-    """Prix Black–Scholes, vectorisé sur K et T (broadcast NumPy)."""
+    """Black–Scholes price, vectorised on K and T (NumPy broadcast)."""
     K, T = np.asarray(K, float), np.asarray(T, float)
     sq = m.sigma * np.sqrt(T)
     d1 = (np.log(m.s0 / K) + (m.r - m.q + 0.5 * m.sigma**2) * T) / sq
@@ -144,7 +144,7 @@ def bs_delta_vega(m: BlackScholes, K, T, kind: OptionType = "call"):
 
 def geometric_asian_price(m: BlackScholes, K: float, T: float, n: int,
                           kind: OptionType = "call") -> float:
-    """Asiatique géométrique discrète (dates iT/n, i=1..n) : log G gaussien."""
+    """Discrete geometric Asian (dates iT/n, i=1..n): Gaussian log G."""
     mu = math.log(m.s0) + (m.r - m.q - 0.5 * m.sigma**2) * T * (n + 1) / (2 * n)
     s = m.sigma * math.sqrt(T * (n + 1) * (2 * n + 1) / (6 * n * n))
     d2 = (mu - math.log(K)) / s
@@ -156,16 +156,16 @@ def geometric_asian_price(m: BlackScholes, K: float, T: float, n: int,
 
 
 # --------------------------------------------------------------------------- #
-# 2. Européenne Monte Carlo : antithétique + variable de contrôle (Ch. 2-3)
+# 2. European Monte Carlo: antithetic + control variate (Ch. 2-3)
 # --------------------------------------------------------------------------- #
 def mc_european(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
                 n_paths: int = 2_000_000, chunk: int = 2**18,
                 antithetic: bool = True, control_variate: bool = True,
                 seed: int = 42) -> MCResult:
     """
-    Simulation exacte de S_T (pas de discrétisation).
-    Variable de contrôle : S_T, d'espérance connue S0 e^{(r-q)T}.
-    Beta optimal estimé sur un bloc pilote indépendant (évite le biais).
+    Exact simulation of S_T (no discretisation).
+    Control variate: S_T, with known expectation S0 e^{(r-q)T}.
+    Optimal beta estimated on an independent pilot block (avoids bias).
     """
     rng = np.random.default_rng(seed)
     drift = (m.r - m.q - 0.5 * m.sigma**2) * T
@@ -203,13 +203,13 @@ def mc_european(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
 
 
 # --------------------------------------------------------------------------- #
-# 3. Quasi-Monte Carlo randomisé (Ch. 4) : Sobol brouillé + réplications
+# 3. Randomised quasi-Monte Carlo (Ch. 4): scrambled Sobol + replications
 # --------------------------------------------------------------------------- #
 def rqmc_european(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
                   log2_n: int = 16, n_replicas: int = 32, seed: int = 0) -> MCResult:
     """
-    Chaque réplique = un Sobol brouillé indépendant -> estimateur sans biais.
-    L'erreur se mesure sur la dispersion entre répliques (IC valide).
+    Each replication = an independent scrambled Sobol -> unbiased estimator.
+    The error is measured from the dispersion between replications (valid CI).
     """
     drift = (m.r - m.q - 0.5 * m.sigma**2) * T
     vol = m.sigma * math.sqrt(T)
@@ -227,11 +227,11 @@ def rqmc_european(m: BlackScholes, K: float, T: float, kind: OptionType = "call"
 
 
 # --------------------------------------------------------------------------- #
-# 4. Greeks Monte Carlo : méthode pathwise / processus tangent (Ch. 2.2.4)
+# 4. Monte Carlo Greeks: pathwise method / tangent process (Ch. 2.2.4)
 # --------------------------------------------------------------------------- #
 def mc_greeks_pathwise(m: BlackScholes, K: float, T: float, n_paths: int = 1_000_000,
                        seed: int = 7) -> dict[str, MCResult]:
-    """Delta et Vega d'un call : dérivée du payoff le long de la trajectoire."""
+    """Delta and Vega of a call: derivative of the payoff along the path."""
     rng = np.random.default_rng(seed)
     z = rng.standard_normal(n_paths)
     sq = math.sqrt(T)
@@ -247,14 +247,14 @@ def mc_greeks_pathwise(m: BlackScholes, K: float, T: float, n_paths: int = 1_000
 
 
 # --------------------------------------------------------------------------- #
-# 5. Asiatique arithmétique : noyau Numba parallèle + contrôle géométrique
+# 5. Arithmetic Asian: parallel Numba kernel + geometric control
 # --------------------------------------------------------------------------- #
 @njit(parallel=True, fastmath=True, cache=True)
 def _asian_kernel(z, log_s0, drift_dt, vol_dt, K, sign):
     """
-    z : (n_paths, n_steps) gaussiennes. Une trajectoire par itération prange :
-    boucle temporelle en registres, aucune matrice de prix stockée.
-    Renvoie les payoffs arithmétique et géométrique (variable de contrôle).
+    z: (n_paths, n_steps) Gaussians. One path per prange iteration:
+    time loop in registers, no price matrix stored.
+    Returns the arithmetic and geometric payoffs (control variate).
     """
     n_paths, n_steps = z.shape
     arith = np.empty(n_paths)
@@ -308,23 +308,23 @@ def mc_asian_arithmetic(m: BlackScholes, K: float, T: float, n_steps: int = 52,
 
 
 # --------------------------------------------------------------------------- #
-# 6. Américaine : Longstaff–Schwartz (Ch. 12)
+# 6. American: Longstaff–Schwartz (Ch. 12)
 # --------------------------------------------------------------------------- #
 @njit(parallel=True, cache=True)
 def _lsm_kernel(z, log_s0, drift_dt, vol_dt, K, df, degree, n_blocks):
     """
-    z : (n_steps, n_paths) gaussiennes, transformées EN PLACE en prix S (pas de
-    copie : mémoire divisée par 2). Ligne t = date (t+1)·dt, accès contigu.
+    z: (n_steps, n_paths) Gaussians, transformed IN PLACE into prices S (no
+    copy: memory divided by 2). Row t = date (t+1)·dt, contiguous access.
 
-    Régression par équations normales : G c = b avec G_kl = Σ x^(k+l),
-    b_k = Σ x^k · cash sur les trajectoires dans la monnaie. Les sommes sont
-    calculées en parallèle par blocs (réductions sans conflit d'écriture),
-    puis on résout un système (degree+1)×(degree+1) : coût O(n) par date,
-    au lieu d'une SVD de la matrice n × (degree+1) avec lstsq.
+    Regression through the normal equations: G c = b with G_kl = Σ x^(k+l),
+    b_k = Σ x^k · cash over the in-the-money paths. The sums are
+    computed in parallel by blocks (reductions with no write conflicts),
+    then a (degree+1)×(degree+1) system is solved: O(n) cost per date,
+    instead of an SVD of the n × (degree+1) matrix with lstsq.
     """
     n_steps, n = z.shape
     p = degree + 1
-    # 1. Trajectoires : log-prix cumulés puis exponentielle, en place
+    # 1. Paths: cumulative log-prices then exponential, in place
     for t in range(n_steps):
         for i in prange(n):
             prev = log_s0 if t == 0 else z[t - 1, i]
@@ -344,18 +344,18 @@ def _lsm_kernel(z, log_s0, drift_dt, vol_dt, K, df, degree, n_blocks):
     G = np.empty((p, p))
     coef = np.zeros(p)
 
-    # 2. Programmation dynamique rétrograde
+    # 2. Backward dynamic programming
     for t in range(n_steps - 2, -1, -1):
         for i in prange(n):
             cash[i] *= df
-        for b in prange(n_blocks):                       # sommes partielles par bloc
+        for b in prange(n_blocks):                       # partial sums per block
             mom_b = np.zeros(2 * p - 1)
             rhs_b = np.zeros(p)
             c = 0
             for i in range(b * block, min(n, (b + 1) * block)):
                 s = z[t, i]
                 if s < K:
-                    x = s / K                            # normalisation : bon conditionnement
+                    x = s / K                            # normalisation: good conditioning
                     xk = 1.0
                     for k in range(2 * p - 1):
                         mom_b[k] += xk
@@ -374,12 +374,12 @@ def _lsm_kernel(z, log_s0, drift_dt, vol_dt, K, df, degree, n_blocks):
             for l in range(p):
                 G[k, l] = m_tot[k + l]
         coef[:] = np.linalg.solve(G, r_tot)
-        for i in prange(n):                              # décision d'exercice
+        for i in prange(n):                              # exercise decision
             s = z[t, i]
             if s < K:
                 x = s / K
                 cont = 0.0
-                for k in range(p - 1, -1, -1):           # schéma de Horner
+                for k in range(p - 1, -1, -1):           # Horner scheme
                     cont = cont * x + coef[k]
                 if K - s > cont:
                     cash[i] = K - s
@@ -391,10 +391,10 @@ def _lsm_kernel(z, log_s0, drift_dt, vol_dt, K, df, degree, n_blocks):
 def lsm_american_put(m: BlackScholes, K: float, T: float, n_steps: int = 50,
                      n_paths: int = 200_000, degree: int = 3, seed: int = 3) -> MCResult:
     """
-    Programmation dynamique rétrograde ; espérance conditionnelle approchée par
-    régression polynomiale sur les trajectoires dans la monnaie.
-    (Estimateur légèrement biaisé bas — borne inférieure du vrai prix.)
-    Boucle complète dans un noyau Numba parallèle (voir _lsm_kernel).
+    Backward dynamic programming; conditional expectation approximated by
+    polynomial regression on the in-the-money paths.
+    (Slightly low-biased estimator — a lower bound on the true price.)
+    Full loop in a parallel Numba kernel (see _lsm_kernel).
     """
     rng = np.random.default_rng(seed)
     dt = T / n_steps
@@ -402,20 +402,20 @@ def lsm_american_put(m: BlackScholes, K: float, T: float, n_steps: int = 50,
     cash = _lsm_kernel(z, math.log(m.s0), (m.r - m.q - 0.5 * m.sigma**2) * dt,
                        m.sigma * math.sqrt(dt), float(K), math.exp(-m.r * dt),
                        degree, 64)
-    price = max(float(cash.mean()), K - m.s0)           # exercice immédiat possible
+    price = max(float(cash.mean()), K - m.s0)           # immediate exercise possible
     return MCResult(price, float(cash.std(ddof=1) / math.sqrt(n_paths)), n_paths)
 
 
 # --------------------------------------------------------------------------- #
-# Démonstration rapide
+# Quick demo
 # --------------------------------------------------------------------------- #
 def _demo() -> None:
     m = BlackScholes(s0=100.0, r=0.05, sigma=0.2)
-    print("S=K=100, r=5 %, sigma=20 %, T=1\n")
-    print(f"Call européen exact      : {float(bs_price(m, 100, 1)):.6f}")
-    print(f"Call européen MC         : {mc_european(m, 100, 1)}")
-    print(f"Call européen QMC        : {rqmc_european(m, 100, 1)}")
-    print(f"Asiatique arithm. (52 d.): {mc_asian_arithmetic(m, 100, 1)}")
-    print(f"Put américain (LSM)      : {lsm_american_put(m, 100, 1)}")
-    print("\nPour la démonstration complète : python bench.py")
+    print("S=K=100, r=5%, sigma=20%, T=1\n")
+    print(f"Exact European call      : {float(bs_price(m, 100, 1)):.6f}")
+    print(f"European call MC         : {mc_european(m, 100, 1)}")
+    print(f"European call QMC        : {rqmc_european(m, 100, 1)}")
+    print(f"Arithmetic Asian (52 d.) : {mc_asian_arithmetic(m, 100, 1)}")
+    print(f"American put (LSM)       : {lsm_american_put(m, 100, 1)}")
+    print("\nFor the full demo: python bench.py")
 

@@ -1,33 +1,33 @@
 """
-hedging.py — Backtest de couverture : P&L d'une stratégie de delta-hedging.
+hedging.py — Hedging backtest: P&L of a delta-hedging strategy.
 
-Le prix d'une option est le coût de sa couverture (Bouchard & Chassagneux,
+The price of an option is the cost of hedging it (Bouchard & Chassagneux,
 *Fundamentals and Advanced Techniques in Derivatives Hedging*, Springer 2016).
-Ce module ne vérifie plus qu'un prix est juste : il vérifie qu'il est COUVRABLE,
-et mesure ce que coûte une couverture imparfaite.
+This module no longer checks that a price is right: it checks that it is HEDGEABLE,
+and measures what an imperfect hedge costs.
 
-Le vendeur encaisse la prime p(0, S0) calculée avec la vol de couverture σ̃
-(m.sigma), puis rebalance N fois une position en actions (et, en option, en
-une seconde option pour neutraliser le gamma). Le cours suit sa vraie
-dynamique : vol réalisée σ (constante, ou différente par trajectoire) et
-dérive réelle μ (pas forcément la dérive risque-neutre).
+The seller collects the premium p(0, S0) computed with the hedging vol σ̃
+(m.sigma), then rebalances a stock position N times (and, optionally, a
+second option to neutralise gamma). The price follows its true
+dynamics: realised vol σ (constant, or different per path) and
+real drift μ (not necessarily the risk-neutral drift).
 
-Deux sources d'erreur (B&C, § 7.3) :
+Two sources of error (B&C, § 7.3):
 
-  1. Vol mal spécifiée (§ 7.3.1), en temps continu :
-         P&L = ½ ∫_0^T e^{-rt} (σ̃² − σ_t²) S_t² Γ_t dt          (actualisé en 0)
-     Gamma > 0 et σ̃ > σ : gain ; σ̃ < σ : perte. Gamma nul : insensible à σ.
-     Si σ̃ = σ_max et le payoff est convexe, P&L >= 0 sur toute trajectoire
-     (équation de Black-Scholes-Barenblatt, § 5.2.1).
+  1. Misspecified vol (§ 7.3.1), in continuous time:
+         P&L = ½ ∫_0^T e^{-rt} (σ̃² − σ_t²) S_t² Γ_t dt          (discounted to 0)
+     Gamma > 0 and σ̃ > σ: gain; σ̃ < σ: loss. Zero gamma: insensitive to σ.
+     If σ̃ = σ_max and the payoff is convex, P&L >= 0 on every path
+     (Black-Scholes-Barenblatt equation, § 5.2.1).
 
-  2. Rebalancement discret (§ 7.3.2) : erreur d'écart-type en O(1/√N).
-     Au premier ordre, chaque pas contribue −½ Γ S² σ² (Z² − 1) Δt, d'où
+  2. Discrete rebalancing (§ 7.3.2): standard deviation of the error in O(1/√N).
+     To first order, each step contributes −½ Γ S² σ² (Z² − 1) Δt, hence
          Var(P&L) ≈ Σ_i e^{-2r t_i} ½ σ⁴ Δt² E[Γ(t_i, S_{t_i})² S_{t_i}⁴]
-     calculé par quadrature dans theoretical_std().
+     computed by quadrature in theoretical_std().
 
-Conventions : dividende continu q réinvesti en actions ; cash rémunéré à r ;
-P&L = (valeur du portefeuille − payoff) à l'échéance, actualisé en 0.
-Positif = gain du vendeur.
+Conventions: continuous dividend q reinvested in stock; cash earns r;
+P&L = (portfolio value − payoff) at expiry, discounted to 0.
+Positive = seller's gain.
 """
 from __future__ import annotations
 
@@ -43,11 +43,11 @@ _INV_SQRT_2PI = 1.0 / math.sqrt(2.0 * math.pi)
 
 
 # --------------------------------------------------------------------------- #
-# Black-Scholes vectorisé sur le spot (le pricer de référence l'est sur K, T)
+# Black-Scholes vectorised on the spot (the reference pricer is vectorised on K, T)
 # --------------------------------------------------------------------------- #
 def _bs(S: np.ndarray, K: float, tau: float, r: float, q: float, sig: float,
         kind: OptionType):
-    """(prix, delta, gamma) pour un vecteur de spots, à maturité résiduelle tau."""
+    """(price, delta, gamma) for a vector of spots, at remaining maturity tau."""
     sgn = 1.0 if kind == "call" else -1.0
     if tau <= 0.0:
         dans = (sgn * (S - K) > 0).astype(float)
@@ -67,21 +67,21 @@ def _bs(S: np.ndarray, K: float, tau: float, r: float, q: float, sig: float,
 
 
 # --------------------------------------------------------------------------- #
-# Résultats
+# Results
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class HedgedOption:
-    """Seconde option, traitée à son prix modèle (vol σ̃), pour neutraliser le gamma."""
+    """Second option, traded at its model price (vol σ̃), to neutralise gamma."""
     K: float
-    T: float                     # doit être >= l'échéance de l'option couverte
+    T: float                     # must be >= the expiry of the hedged option
     kind: OptionType = "call"
 
 
 @dataclass
 class HedgingResult:
-    pnl: np.ndarray              # P&L actualisé en 0, par trajectoire
-    erreur_vol: np.ndarray       # ½ ∫ e^{-rt} (σ̃² − σ_t²) S² Γ_net dt (somme de Riemann)
-    prime: float                 # prix encaissé à t = 0 (vol σ̃)
+    pnl: np.ndarray              # P&L discounted to 0, per path
+    erreur_vol: np.ndarray       # ½ ∫ e^{-rt} (σ̃² − σ_t²) S² Γ_net dt (Riemann sum)
+    prime: float                 # price collected at t = 0 (vol σ̃)
     n_reb: int
     infos: dict = field(default_factory=dict)
 
@@ -98,7 +98,7 @@ class HedgingResult:
         return self.ecart_type / math.sqrt(self.pnl.size)
 
     def cvar(self, niveau: float = 0.05) -> float:
-        """Perte moyenne dans les `niveau` pires cas (expected shortfall), en P&L."""
+        """Average loss in the worst `niveau` cases (expected shortfall), in P&L."""
         seuil = np.quantile(self.pnl, niveau)
         return float(self.pnl[self.pnl <= seuil].mean())
 
@@ -111,9 +111,9 @@ class HedgingResult:
 
     def __str__(self) -> str:
         d = self.resume()
-        return (f"prime {d['prime']:.4f} | N={d['n_reb']} | P&L moyen {d['moyenne']:+.4f} "
-                f"± {1.96 * d['erreur_type']:.4f} | écart-type {d['ecart_type']:.4f} "
-                f"({d['ecart_type_rel']:.1%} de la prime) | CVaR 5 % {d['cvar05']:+.4f}")
+        return (f"premium {d['prime']:.4f} | N={d['n_reb']} | mean P&L {d['moyenne']:+.4f} "
+                f"± {1.96 * d['erreur_type']:.4f} | std dev {d['ecart_type']:.4f} "
+                f"({d['ecart_type_rel']:.1%} of premium) | CVaR 5% {d['cvar05']:+.4f}")
 
 
 # --------------------------------------------------------------------------- #
@@ -126,15 +126,15 @@ def simulate_hedging(m: BlackScholes, K: float, T: float, kind: OptionType = "ca
                        couverture_gamma: HedgedOption | None = None,
                        chunk: int = 2**15, seed: int = 2026) -> HedgingResult:
     """
-    Vend l'option (K, T, kind) au prix Black-Scholes de vol m.sigma (= σ̃) et la
-    couvre en delta (et en gamma si `couverture_gamma`) à n_reb dates équidistantes.
+    Sells the option (K, T, kind) at the Black-Scholes price with vol m.sigma (= σ̃) and
+    delta-hedges it (and gamma-hedges it if `couverture_gamma`) on n_reb equally spaced dates.
 
-    sigma_reelle : vol réalisée. None -> σ̃ (modèle juste) ; float -> constante ;
-                   tableau (n_paths,) -> une vol constante par trajectoire.
-    mu           : dérive réelle du cours (hors dividende). None -> r − q (risque-neutre).
+    sigma_reelle : realised vol. None -> σ̃ (correct model); float -> constant;
+                   array (n_paths,) -> one constant vol per path.
+    mu           : real drift of the price (excluding dividend). None -> r − q (risk-neutral).
 
-    Simulation exacte du cours entre deux dates (log-normal) : la seule erreur
-    est celle de la couverture.
+    Exact simulation of the price between two dates (log-normal): the only error
+    is the hedging error.
     """
     sig_c = m.sigma
     mu = m.r - m.q if mu is None else mu
@@ -142,10 +142,10 @@ def simulate_hedging(m: BlackScholes, K: float, T: float, kind: OptionType = "ca
         sigma_reelle = sig_c
     sig_arr = np.broadcast_to(np.asarray(sigma_reelle, float), (n_paths,))
     if np.any(sig_arr <= 0):
-        raise ValueError("sigma_reelle doit être > 0")
+        raise ValueError("sigma_reelle must be > 0")
     G = couverture_gamma
     if G is not None and G.T < T - 1e-12:
-        raise ValueError("L'option de couverture doit vivre au moins jusqu'à l'échéance couverte")
+        raise ValueError("The hedging option must live at least until the hedged expiry")
 
     dt = T / n_reb
     sqdt = math.sqrt(dt)
@@ -163,7 +163,7 @@ def simulate_hedging(m: BlackScholes, K: float, T: float, kind: OptionType = "ca
         e_vol = np.zeros(b)
 
         def positions(S, t):
-            """Nombre d'actions, nombre d'options de couverture, gamma net."""
+            """Number of shares, number of hedging options, net gamma."""
             _, delta, gamma = _bs(S, K, T - t, m.r, m.q, sig_c, kind)
             if G is None:
                 return delta, 0.0, gamma, 0.0
@@ -178,12 +178,12 @@ def simulate_hedging(m: BlackScholes, K: float, T: float, kind: OptionType = "ca
             e_vol += 0.5 * math.exp(-m.r * t) * (sig_c**2 - sig**2) * S * S * g_net * dt
             z = rng.standard_normal(b)
             S = S * np.exp((mu - 0.5 * sig * sig) * dt + sig * sqdt * z)
-            a = a * reinv                       # dividende réinvesti en actions
+            a = a * reinv                       # dividend reinvested in stock
             cash = cash * capi
             t1 = (i + 1) * dt
             if G is not None:
                 H = _bs(S, G.K, G.T - t1, m.r, m.q, sig_c, G.kind)[0]
-            if i + 1 < n_reb:                   # rebalancement autofinancé
+            if i + 1 < n_reb:                   # self-financing rebalancing
                 X = a * S + n2 * H + cash
                 a, n2, g_net, H_new = positions(S, t1)
                 if G is not None:
@@ -197,17 +197,17 @@ def simulate_hedging(m: BlackScholes, K: float, T: float, kind: OptionType = "ca
 
 
 # --------------------------------------------------------------------------- #
-# Référence : écart-type théorique de l'erreur de rebalancement discret
+# Reference: theoretical standard deviation of the discrete rebalancing error
 # --------------------------------------------------------------------------- #
 def theoretical_std(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
                          n_reb: int = 52, mu: float | None = None, n_quad: int = 4001) -> float:
     """
-    Premier ordre de l'erreur de couverture discrète, modèle juste (σ réalisée = σ̃) :
+    First order of the discrete hedging error, correct model (realised σ = σ̃):
         Var ≈ Σ_{i<N} e^{-2r t_i} ½ σ⁴ Δt² E[Γ(t_i, S_{t_i})² S_{t_i}⁴]
-    L'espérance est calculée sous la loi réelle de S_{t_i} (dérive mu) par une
-    règle des trapèzes sur une grille gaussienne fine : près de l'échéance, Γ est
-    un pic étroit (largeur σ√Δt) qu'une quadrature de Gauss-Hermite rate (sous-
-    estimation de 3 à 4 % dès N = 50). Indépendant du type call/put (même gamma).
+    The expectation is computed under the real law of S_{t_i} (drift mu) with a
+    trapezoidal rule on a fine Gaussian grid: near expiry, Γ is
+    a narrow spike (width σ√Δt) that Gauss-Hermite quadrature misses (under-
+    estimation of 3 to 4% from N = 50). Independent of call/put type (same gamma).
     """
     del kind
     mu = m.r - m.q if mu is None else mu
@@ -232,14 +232,14 @@ def theoretical_std(m: BlackScholes, K: float, T: float, kind: OptionType = "cal
 def _demo() -> None:
     m = BlackScholes(s0=100.0, r=0.03, sigma=0.20)
     K, T = 100.0, 0.5
-    print("Vente d'un call ATM 6 mois, couvert en delta (100 000 trajectoires)\n")
+    print("Sale of a 6-month ATM call, delta-hedged (100,000 paths)\n")
     for n in (12, 52, 252):
         res = simulate_hedging(m, K, T, n_reb=n)
         print(f"N={n:4d}  {res}")
-        print(f"        écart-type théorique (1er ordre) : {theoretical_std(m, K, T, n_reb=n):.4f}")
-    print("\nVol de couverture 20 %, vol réalisée 25 % (sous-estimation) :")
+        print(f"        theoretical std dev (1st order): {theoretical_std(m, K, T, n_reb=n):.4f}")
+    print("\nHedging vol 20%, realised vol 25% (underestimated):")
     print("  ", simulate_hedging(m, K, T, n_reb=252, sigma_reelle=0.25))
-    print("\nPour la validation complète : python validate_hedging.py")
+    print("\nFor the full validation: python validate_hedging.py")
 
 
 if __name__ == "__main__":

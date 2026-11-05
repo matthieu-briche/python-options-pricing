@@ -1,32 +1,32 @@
 """
-greeks.py — Sensibilités (Grecques) optimisées CPU.
+greeks.py — CPU-optimised sensitivities (Greeks).
 
-Méthodes (G. Pagès, *Numerical Probability*, Ch. 2.2 et Ch. 10) :
-  - Formules fermées Black–Scholes (référence, vectorisées).
-  - Méthode PATHWISE (processus tangent) : on dérive le payoff le long de la
-    trajectoire. Faible variance, valable pour Delta, Vega, Rho, Theta
-    (payoff lipschitzien).
-  - Méthode du RAPPORT DE VRAISEMBLANCE (log-likelihood) : on dérive la densité,
-    pas le payoff -> marche pour les payoffs discontinus. Utilisée ici en
-    estimateur MIXTE pathwise-LR pour le Gamma (le Delta pathwise d'un call
-    est discontinu, il ne se redérive pas trajectoire par trajectoire).
-  - Différences finies à NOMBRES ALÉATOIRES COMMUNS (CRN) : méthode
-    universelle (options américaines / LSM), même seed pour prix de base et bumpés.
-  - Arbre binomial CRR vectorisé : référence déterministe pour l'américaine.
+Methods (G. Pagès, *Numerical Probability*, Ch. 2.2 and Ch. 10):
+  - Black–Scholes closed forms (reference, vectorised).
+  - PATHWISE method (tangent process): the payoff is differentiated along the
+    path. Low variance, valid for Delta, Vega, Rho, Theta
+    (Lipschitz payoff).
+  - LIKELIHOOD RATIO method (log-likelihood): the density is differentiated,
+    not the payoff -> works for discontinuous payoffs. Used here in a
+    MIXED pathwise-LR estimator for Gamma (the pathwise Delta of a call
+    is discontinuous, so it cannot be differentiated again path by path).
+  - Finite differences with COMMON RANDOM NUMBERS (CRN): universal
+    method (American options / LSM), same seed for base and bumped prices.
+  - Vectorised CRR binomial tree: deterministic reference for the American.
 
-Optimisation CPU :
-  - UNE seule simulation donne le prix ET toutes les Grecques (pas de re-pricing).
-  - Noyau Numba parallèle pour l'asiatique : 10 estimateurs par trajectoire en
-    une passe, en registres.
-  - Variables de contrôle aussi sur les Grecques (asiatique géométrique, dont
-    les Grecques exactes s'obtiennent par dérivation de la formule fermée).
+CPU optimisation:
+  - ONE simulation gives the price AND all the Greeks (no re-pricing).
+  - Parallel Numba kernel for the Asian: 10 estimators per path in
+    one pass, in registers.
+  - Control variates on the Greeks too (geometric Asian, whose
+    exact Greeks come from differentiating the closed form).
 """
 from __future__ import annotations
 
 if __name__ == "__main__":
-    # Fichier lancé directement (python greeks.py / bouton ▶ de VS Code) : on exécute la
-    # démo via le module importé "greeks" et non via "__main__", car le cache Numba
-    # est lié au nom du module.
+    # File run directly (python greeks.py / VS Code ▶ button): the demo runs through
+    # the imported "greeks" module and not "__main__", because the Numba cache
+    # is tied to the module name.
     import sys as _sys
     from pathlib import Path as _Path
     _sys.path.insert(0, str(_Path(__file__).resolve().parent))
@@ -50,7 +50,7 @@ _INV_SQRT_2PI = 1.0 / math.sqrt(2.0 * math.pi)
 
 
 # --------------------------------------------------------------------------- #
-# 1. Formules fermées Black–Scholes (vectorisées sur K, T)
+# 1. Black–Scholes closed forms (vectorised on K, T)
 # --------------------------------------------------------------------------- #
 def bs_greeks(m: BlackScholes, K, T, kind: OptionType = "call") -> dict[str, np.ndarray]:
     K, T = np.asarray(K, float), np.asarray(T, float)
@@ -76,19 +76,19 @@ def bs_greeks(m: BlackScholes, K, T, kind: OptionType = "call") -> dict[str, np.
 
 
 # --------------------------------------------------------------------------- #
-# 2. Européenne Monte Carlo : toutes les Grecques en une simulation
+# 2. European Monte Carlo: all the Greeks in one simulation
 # --------------------------------------------------------------------------- #
 def mc_european_greeks(m: BlackScholes, K: float, T: float, kind: OptionType = "call",
                        n_paths: int = 2_000_000, chunk: int = 2**18,
                        seed: int = 11) -> dict[str, MCResult]:
     """
-    Estimateurs par trajectoire (f = payoff, ind = 1{dans la monnaie}, s = ±1) :
+    Per-path estimators (f = payoff, ind = 1{in the money}, s = ±1):
       delta : e^{-rT} s ind S_T / S0                         (pathwise)
-      gamma : e^{-rT} s ind S_T / S0² (Z/(σ√T) - 1)          (mixte pathwise-LR)
+      gamma : e^{-rT} s ind S_T / S0² (Z/(σ√T) - 1)          (mixed pathwise-LR)
       vega  : e^{-rT} s ind S_T (√T Z - σT)                  (pathwise)
       rho   : -T e^{-rT} f + e^{-rT} s ind S_T T             (pathwise)
       theta : r e^{-rT} f - e^{-rT} s ind S_T (r-q-σ²/2 + σZ/(2√T))
-    Variables antithétiques (Z, -Z) sur tous les estimateurs.
+    Antithetic variates (Z, -Z) on all the estimators.
     """
     rng = np.random.default_rng(seed)
     sqT = math.sqrt(T)
@@ -126,14 +126,14 @@ def _with_n(r: MCResult, n: int) -> MCResult:
 
 
 # --------------------------------------------------------------------------- #
-# 3. Asiatique arithmétique : noyau Numba, 5 Grecques + contrôle géométrique
+# 3. Arithmetic Asian: Numba kernel, 5 Greeks + geometric control
 # --------------------------------------------------------------------------- #
 @njit(parallel=True, fastmath=True, cache=True)
 def _asian_greeks_kernel(z, s0, r, mu, sigma, dt, K, sgn, df):
     """
-    Renvoie out[10, n] : lignes 0-4 = (prix, delta, gamma, vega, rho) arithmétique,
-    lignes 5-9 = idem pour l'asiatique géométrique (variable de contrôle).
-    Gamma mixte : le poids LR porte sur le 1er incrément Z_0 (seul lien avec S0).
+    Returns out[10, n]: rows 0-4 = arithmetic (price, delta, gamma, vega, rho),
+    rows 5-9 = same for the geometric Asian (control variate).
+    Mixed Gamma: the LR weight applies to the first increment Z_0 (the only link to S0).
     """
     n_paths, n = z.shape
     T = n * dt
@@ -142,12 +142,12 @@ def _asian_greeks_kernel(z, s0, r, mu, sigma, dt, K, sgn, df):
     for i in prange(n_paths):
         log_s = math.log(s0)
         w = 0.0
-        a = 0.0      # somme S_tj
-        a_sig = 0.0  # somme dS_tj/dsigma = S_tj (W_tj - sigma t_j)
-        a_r = 0.0    # somme dS_tj/dr     = S_tj t_j
-        lg = 0.0     # somme log S_tj
-        g_sig = 0.0  # somme (W_tj - sigma t_j)
-        g_r = 0.0    # somme t_j
+        a = 0.0      # sum S_tj
+        a_sig = 0.0  # sum dS_tj/dsigma = S_tj (W_tj - sigma t_j)
+        a_r = 0.0    # sum dS_tj/dr     = S_tj t_j
+        lg = 0.0     # sum log S_tj
+        g_sig = 0.0  # sum (W_tj - sigma t_j)
+        g_r = 0.0    # sum t_j
         for j in range(n):
             t = (j + 1) * dt
             w += sqdt * z[i, j]
@@ -162,7 +162,7 @@ def _asian_greeks_kernel(z, s0, r, mu, sigma, dt, K, sgn, df):
         a /= n; a_sig /= n; a_r /= n
         g = math.exp(lg / n); gs = g * g_sig / n; gr = g * g_r / n
         lr = z[i, 0] / (sigma * sqdt) - 1.0
-        # arithmétique
+        # arithmetic
         fa = max(sgn * (a - K), 0.0)
         ia = df * sgn if fa > 0.0 else 0.0
         out[0, i] = df * fa
@@ -170,7 +170,7 @@ def _asian_greeks_kernel(z, s0, r, mu, sigma, dt, K, sgn, df):
         out[2, i] = ia * a / (s0 * s0) * lr
         out[3, i] = ia * a_sig
         out[4, i] = -T * df * fa + ia * a_r
-        # géométrique
+        # geometric
         fg = max(sgn * (g - K), 0.0)
         ig = df * sgn if fg > 0.0 else 0.0
         out[5, i] = df * fg
@@ -183,7 +183,7 @@ def _asian_greeks_kernel(z, s0, r, mu, sigma, dt, K, sgn, df):
 
 def geometric_asian_greeks(m: BlackScholes, K: float, T: float, n: int,
                            kind: OptionType = "call") -> np.ndarray:
-    """Grecques EXACTES de l'asiatique géométrique (dérivées de la formule fermée)."""
+    """EXACT Greeks of the geometric Asian (derived from the closed form)."""
     p = lambda mm: geometric_asian_price(mm, K, T, n, kind)
     hs, hv, hr = 1e-3 * m.s0, 1e-5, 1e-6
     up, dn = replace(m, s0=m.s0 + hs), replace(m, s0=m.s0 - hs)
@@ -208,7 +208,7 @@ def mc_asian_greeks(m: BlackScholes, K: float, T: float, n_steps: int = 52,
     exact_geo = geometric_asian_greeks(m, K, T, n_steps, kind)
 
     beta = np.zeros(5)
-    if control_variate:                                # bloc pilote indépendant
+    if control_variate:                                # independent pilot block
         o = _asian_greeks_kernel(rng.standard_normal((20_000, n_steps)), *args)
         for k in range(5):
             c = np.cov(o[k], o[k + 5])
@@ -226,7 +226,7 @@ def mc_asian_greeks(m: BlackScholes, K: float, T: float, n_steps: int = 52,
 
 
 # --------------------------------------------------------------------------- #
-# 4. Méthode universelle : différences finies à nombres aléatoires communs
+# 4. Universal method: finite differences with common random numbers
 # --------------------------------------------------------------------------- #
 PriceFn = Callable[[BlackScholes, float], float]
 
@@ -235,10 +235,10 @@ def fd_greeks_crn(price_fn: PriceFn, m: BlackScholes, T: float,
                   rel_ds: float = 0.01, d_sigma: float = 0.01,
                   d_r: float = 1e-3, d_t: float = 1 / 52) -> dict[str, float]:
     """
-    price_fn(model, T) DOIT utiliser une seed fixe (CRN) : le bruit Monte Carlo
-    s'annule alors en grande partie dans les différences. Différences centrées.
-    Coût : 9 évaluations du pricer -> à réserver aux produits sans estimateur
-    pathwise/LR simple (américaines, barrières, ...).
+    price_fn(model, T) MUST use a fixed seed (CRN): the Monte Carlo noise then
+    largely cancels out in the differences. Central differences.
+    Cost: 9 pricer evaluations -> keep it for products without a simple
+    pathwise/LR estimator (American, barrier, ...).
     """
     ds = rel_ds * m.s0
     p0 = price_fn(m, T)
@@ -252,11 +252,11 @@ def fd_greeks_crn(price_fn: PriceFn, m: BlackScholes, T: float,
 
 
 # --------------------------------------------------------------------------- #
-# 5. Référence américaine : arbre binomial CRR vectorisé
+# 5. American reference: vectorised CRR binomial tree
 # --------------------------------------------------------------------------- #
 def crr_american(m: BlackScholes, K: float, T: float, kind: OptionType = "put",
                  n: int = 2000) -> dict[str, float]:
-    """Delta, Gamma, Theta lus sur les premiers nœuds ; Vega, Rho par re-pricing."""
+    """Delta, Gamma, Theta read from the first nodes; Vega, Rho by re-pricing."""
     def tree(mm: BlackScholes):
         dt = T / n
         u = math.exp(mm.sigma * math.sqrt(dt)); d = 1.0 / u
@@ -282,9 +282,9 @@ def crr_american(m: BlackScholes, K: float, T: float, kind: OptionType = "put",
         / (0.5 * (s2[2] - s2[0]))
     theta = (v2[1] - v0[0]) / (2 * dt)
     price = lambda mm: tree(mm)[0][0][1][0]
-    # Pas de différentiation volontairement larges : la grille de l'arbre se déplace
-    # avec sigma et r, si bien qu'un pas trop petit (1e-3 / 1e-4) amplifie le bruit
-    # de discrétisation (écarts > 1 % sur vega/rho vs QuantLib, options long terme).
+    # Differentiation steps are deliberately wide: the tree grid moves
+    # with sigma and r, so a step that is too small (1e-3 / 1e-4) amplifies the
+    # discretisation noise (differences > 1% on vega/rho vs QuantLib, long-dated options).
     h_sig, h_r = min(1e-2, 0.5 * m.sigma), 1e-3
     vega = (price(replace(m, sigma=m.sigma + h_sig))
             - price(replace(m, sigma=m.sigma - h_sig))) / (2 * h_sig)
@@ -293,15 +293,15 @@ def crr_american(m: BlackScholes, K: float, T: float, kind: OptionType = "put",
 
 
 # --------------------------------------------------------------------------- #
-# Démonstration rapide
+# Quick demo
 # --------------------------------------------------------------------------- #
 def _demo() -> None:
     m = BlackScholes(s0=100.0, r=0.05, sigma=0.2)
     exact = bs_greeks(m, 100.0, 1.0)
     mc = mc_european_greeks(m, 100.0, 1.0, n_paths=1_000_000)
-    print("Call européen S=K=100, r=5 %, sigma=20 %, T=1 (MC 1M trajectoires)\n")
-    print(f"{'':<7}{'Monte Carlo':>13}{'± IC95':>10}{'exact':>12}")
+    print("European call S=K=100, r=5%, sigma=20%, T=1 (MC 1M paths)\n")
+    print(f"{'':<7}{'Monte Carlo':>13}{'± CI95':>10}{'exact':>12}")
     for g_ in GREEKS:
         print(f"{g_:<7}{mc[g_].price:13.5f}{1.96 * mc[g_].std_error:10.5f}{float(exact[g_]):12.5f}")
-    print("\nPour la démonstration complète : python bench_greeks.py")
+    print("\nFor the full demo: python bench_greeks.py")
 

@@ -1,16 +1,16 @@
 """
-Propriétés théoriques et cohérence interne de pricer.py, greeks.py et dividends.py.
+Theoretical properties and internal consistency of pricer.py, greeks.py and dividends.py.
 
-Pas de référence externe ici (QuantLib reste dans les scripts valider_*.py) :
-on teste ce qui doit être vrai pour TOUT jeu de paramètres raisonnable
-(bornes d'arbitrage, parités, monotonies, cohérence entre méthodes), avec
-hypothesis pour balayer l'espace des paramètres.
+No external reference here (QuantLib stays in the validate_*.py scripts):
+this tests what must hold for ANY reasonable set of parameters
+(arbitrage bounds, parities, monotonicity, consistency between methods), with
+hypothesis to sweep the parameter space.
 
-Lancer sans les tests Monte Carlo lourds : python -m pytest -m "not slow"
+Run without the heavy Monte Carlo tests: python -m pytest -m "not slow"
 """
 import sys
 from pathlib import Path
-# Lancement direct (bouton ▶ de VS Code) : rend importables les modules de la racine du projet
+# Direct launch (VS Code ▶ button): makes the project root modules importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import math
 import warnings
@@ -27,10 +27,10 @@ from pricer import (BlackScholes, _RunningStats, bs_delta_vega, bs_price,
                     mc_asian_arithmetic, mc_european, mc_greeks_pathwise,
                     rqmc_european, sigma_min_crr)
 
-N_ARBRE = 300          # pas d'arbre dans les tests de propriétés (rapide, précision ~1e-2)
-TOL_ARBRE = 0.03       # erreur de discrétisation tolérée sur un prix (S ≈ 100)
+N_ARBRE = 300          # tree steps in the property tests (fast, accuracy ~1e-2)
+TOL_ARBRE = 0.03       # discretisation error tolerated on a price (S ≈ 100)
 
-# Espace de paramètres « marché actions » raisonnable
+# Reasonable "equity market" parameter space
 s_K = st.floats(70.0, 140.0)
 s_T = st.floats(0.05, 2.0)
 s_sig = st.floats(0.08, 0.70)
@@ -41,7 +41,7 @@ PROPS = settings(max_examples=40, deadline=None)
 
 
 # =========================================================================== #
-# 1. Modèle et utilitaires
+# 1. Model and utilities
 # =========================================================================== #
 @pytest.mark.parametrize("kw", [dict(s0=0.0, r=0.0, sigma=0.2),
                                 dict(s0=100.0, r=0.0, sigma=0.0),
@@ -54,7 +54,7 @@ def test_modele_refuse_parametres_invalides(kw):
 def test_running_stats_par_blocs_egal_numpy():
     x = np.random.default_rng(0).normal(3.0, 2.0, 10_007)
     rs = _RunningStats()
-    for bloc in np.array_split(x, 13):          # blocs de tailles inégales
+    for bloc in np.array_split(x, 13):          # blocks of unequal sizes
         rs.update(bloc)
     res = rs.result()
     assert res.price == pytest.approx(x.mean(), rel=1e-12)
@@ -71,7 +71,7 @@ def test_mcresult_intervalle_de_confiance():
 
 
 # =========================================================================== #
-# 2. Black-Scholes fermé
+# 2. Closed-form Black-Scholes
 # =========================================================================== #
 @PROPS
 @given(K=s_K, T=s_T, sig=s_sig, r=s_r, q=s_q)
@@ -132,25 +132,25 @@ def test_bs_price_vectorise():
 
 @pytest.mark.parametrize("kind", ["call", "put"])
 def test_asiatique_geometrique_une_date_egale_black_scholes(kind):
-    """Avec n = 1, la moyenne géométrique est S_T : on retrouve Black-Scholes."""
+    """With n = 1, the geometric mean is S_T: this recovers Black-Scholes."""
     m = BlackScholes(100.0, 0.04, 0.3, 0.01)
     assert geometric_asian_price(m, 95.0, 0.8, 1, kind) == pytest.approx(
         float(bs_price(m, 95.0, 0.8, kind)), rel=1e-12)
 
 
 def test_asiatique_geometrique_moins_chere_que_europeenne():
-    """Moyenner réduit la variance : call asiatique géométrique < call européen ATM."""
+    """Averaging reduces variance: geometric Asian call < ATM European call."""
     m = BlackScholes(100.0, 0.05, 0.3)
     assert geometric_asian_price(m, 100.0, 1.0, 52) < float(bs_price(m, 100.0, 1.0))
 
 
 # =========================================================================== #
-# 3. Arbre CRR (greeks.crr_american) — correction : probabilité dans ]0, 1[
+# 3. CRR tree (greeks.crr_american) — fix: probability in (0, 1)
 # =========================================================================== #
 def test_crr_refuse_probabilite_hors_bornes():
-    """Régression : vol très faible + gros r - q donnait p ≈ 2,9 et un prix faux."""
+    """Regression: very low vol + large r - q gave p ≈ 2.9 and a wrong price."""
     m = BlackScholes(s0=100.0, r=0.04, sigma=0.005, q=-0.40)
-    with pytest.raises(ValueError, match="hors de"):
+    with pytest.raises(ValueError, match="outside"):
         crr_american(m, 100.0, 1.2, "put", n=400)
 
 
@@ -162,7 +162,7 @@ def test_crr_refuse_probabilite_negative():
 
 @pytest.mark.parametrize("r, q", [(0.04, -0.40), (0.0, 0.40), (0.05, 0.0)])
 def test_seuil_sigma_min_crr_exact(r, q):
-    """Juste au-dessus du seuil : accepté ; juste en dessous : refusé."""
+    """Just above the threshold: accepted; just below: rejected."""
     T, n = 1.2, 400
     s_min = sigma_min_crr(r, q, T, n)
     dt = T / n
@@ -183,14 +183,14 @@ def test_put_americain_entre_europeen_et_K(K, T, sig, r, q):
     am = crr_american(m, K, T, "put", n=N_ARBRE)["price"]
     eu = float(bs_price(m, K, T, "put"))
     assert am >= eu - TOL_ARBRE
-    assert am >= max(K - 100.0, 0.0) - 1e-9          # exact : l'arbre impose l'intrinsèque
+    assert am >= max(K - 100.0, 0.0) - 1e-9          # exact: the tree enforces intrinsic value
     assert am <= K + 1e-9
 
 
 @PROPS
 @given(K=s_K, T=s_T, sig=s_sig, r=s_r)
 def test_call_americain_sans_dividende_egal_europeen(K, T, sig, r):
-    """Merton : sans dividende (q = 0, r ≥ 0), l'exercice anticipé d'un call est sous-optimal."""
+    """Merton: without dividends (q = 0, r ≥ 0), early exercise of a call is suboptimal."""
     m = BlackScholes(100.0, r, sig)
     am = crr_american(m, K, T, "call", n=N_ARBRE)["price"]
     assert am == pytest.approx(float(bs_price(m, K, T, "call")), abs=TOL_ARBRE)
@@ -199,7 +199,7 @@ def test_call_americain_sans_dividende_egal_europeen(K, T, sig, r):
 @PROPS
 @given(K=s_K, T=s_T, sig=s_sig, r=s_r, q=s_q)
 def test_parite_americaine(K, T, sig, r, q):
-    """S e^{-qT} - K ≤ C - P ≤ S - K e^{-rT} (bornes de la parité call-put américaine)."""
+    """S e^{-qT} - K ≤ C - P ≤ S - K e^{-rT} (American put-call parity bounds)."""
     m = BlackScholes(100.0, r, sig, q)
     c = crr_american(m, K, T, "call", n=N_ARBRE)["price"]
     p = crr_american(m, K, T, "put", n=N_ARBRE)["price"]
@@ -246,7 +246,7 @@ def test_crr_converge_quand_n_augmente():
 
 
 def test_crr_grecques_coherentes_avec_reprice():
-    """Delta et gamma lus sur l'arbre ≈ différences finies du prix de l'arbre."""
+    """Delta and gamma read from the tree ≈ finite differences of the tree price."""
     from dataclasses import replace
     m, K, T = BlackScholes(100.0, 0.05, 0.25, 0.01), 100.0, 0.5
     g = crr_american(m, K, T, "put", n=1000)
@@ -257,13 +257,13 @@ def test_crr_grecques_coherentes_avec_reprice():
 
 
 # =========================================================================== #
-# 4. Dividendes discrets (dividends.py) — correction : détachement précoce
+# 4. Discrete dividends (dividends.py) — fix: early ex-date
 # =========================================================================== #
 M_DIV = BlackScholes(100.0, 0.04, 0.25)
 
 
 def test_dividende_dans_les_deux_premiers_pas_signale():
-    with pytest.warns(UserWarning, match="deux premiers pas"):
+    with pytest.warns(UserWarning, match="first two tree steps"):
         crr_american_div(M_DIV, 100, 1.0, "put", [(0.5 / 2000, 1.0)])
 
 
@@ -326,11 +326,11 @@ def test_spot_et_escrowed_proches_pour_petits_dividendes():
 
 
 # =========================================================================== #
-# 5. Différences finies CRN (méthode universelle)
+# 5. CRN finite differences (universal method)
 # =========================================================================== #
 @pytest.mark.parametrize("kind", ["call", "put"])
 def test_fd_greeks_crn_sur_pricer_exact(kind):
-    """Branché sur la formule fermée, fd_greeks_crn doit retrouver bs_greeks."""
+    """Plugged into the closed form, fd_greeks_crn must recover bs_greeks."""
     m, K, T = BlackScholes(100.0, 0.03, 0.25, 0.01), 100.0, 1.0
     fd = fd_greeks_crn(lambda mm, TT: float(bs_price(mm, K, TT, kind)), m, T,
                        d_sigma=1e-3, d_r=1e-4, d_t=1e-3)
@@ -340,7 +340,7 @@ def test_fd_greeks_crn_sur_pricer_exact(kind):
 
 
 # =========================================================================== #
-# 6. Monte Carlo (seeds fixes : tests déterministes)
+# 6. Monte Carlo (fixed seeds: deterministic tests)
 # =========================================================================== #
 CAS_MC = [(100.0, 1.0, 0.2, 0.05, 0.0), (90.0, 0.5, 0.35, 0.02, 0.03),
           (120.0, 2.0, 0.25, 0.04, 0.01)]
@@ -395,7 +395,7 @@ def test_mc_european_greeks_vs_formule_fermee(kind):
 
 @pytest.mark.slow
 def test_asiatique_arithmetique_au_dessus_de_la_geometrique():
-    """Inégalité arithmético-géométrique : A ≥ G trajectoire par trajectoire, donc call(A) ≥ call(G)."""
+    """AM-GM inequality: A ≥ G path by path, hence call(A) ≥ call(G)."""
     m = BlackScholes(100.0, 0.05, 0.25)
     res = mc_asian_arithmetic(m, 100.0, 1.0, n_paths=200_000)
     assert res.price >= geometric_asian_price(m, 100.0, 1.0, 52) - 3 * res.std_error
@@ -417,7 +417,7 @@ def test_asiatique_grecques_controle_coherentes():
     avec = mc_asian_greeks(m, 100.0, 1.0, n_paths=200_000)
     for g in ("price", "delta", "vega", "rho"):
         assert abs(avec[g].price - sans[g].price) < 4 * math.hypot(avec[g].std_error, sans[g].std_error), g
-    assert avec["delta"].price == pytest.approx(0.6, abs=0.1)        # ordre de grandeur
+    assert avec["delta"].price == pytest.approx(0.6, abs=0.1)        # order of magnitude
 
 
 @pytest.mark.slow
@@ -438,6 +438,6 @@ def test_lsm_put_tres_dans_la_monnaie_vaut_intrinseque():
 
 
 if __name__ == "__main__":
-    # Lancement direct (python fichier.py / bouton ▶ de VS Code) -> on passe par pytest
+    # Direct launch (python file.py / VS Code ▶ button) -> go through pytest
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

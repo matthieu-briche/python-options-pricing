@@ -1,16 +1,16 @@
 """
-Adaptateur : expose greeks.crr_american avec l'interface attendue par validate_pricer.py.
+Adapter: exposes greeks.crr_american with the interface expected by validate_pricer.py.
 
     price(S, K, T, r, q, sigma, option_type, n=...)
     greeks(S, K, T, r, q, sigma, option_type) -> dict(delta, gamma, vega, theta, rho)
 
-Conventions de crr_american (identiques à celles du script) :
-vega pour +1.00 de vol, rho pour +1.00 de taux, theta par an.
+crr_american conventions (same as the script's):
+vega per +1.00 of vol, rho per +1.00 of rate, theta per year.
 """
 from greeks import crr_american
 from pricer import BlackScholes
 
-N = 2000  # valeur par défaut de crr_american
+N = 2000  # crr_american default value
 
 
 def price(S, K, T, r, q, sigma, option_type, n=N):

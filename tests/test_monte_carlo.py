@@ -1,7 +1,7 @@
-"""Estimateurs Monte Carlo de prix : justesse, réduction de variance, reproductibilité."""
+"""Monte Carlo price estimators: accuracy, variance reduction, reproducibility."""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # pour "from conftest import"
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for "from conftest import"
 
 import math
 
@@ -39,7 +39,7 @@ def test_running_stats_equals_numpy(sizes):
 
 
 # --------------------------------------------------------------------------- #
-# Européenne
+# European
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("kind", ["call", "put"])
 @pytest.mark.parametrize("anti,cv", [(False, False), (True, False), (False, True), (True, True)])
@@ -55,7 +55,7 @@ def test_variance_reduction_hierarchy(model):
     anti = mc_european(model, 100, 1, antithetic=True, control_variate=False, **kw)
     both = mc_european(model, 100, 1, **kw)
     assert both.std_error < anti.std_error < raw.std_error
-    assert raw.std_error / both.std_error > 3          # gain significatif
+    assert raw.std_error / both.std_error > 3          # significant gain
 
 
 def test_mc_reproducible_and_seed_dependent(model):
@@ -72,7 +72,7 @@ def test_mc_standard_error_scales_as_inverse_sqrt_n(model):
 
 
 def test_mc_coverage_of_confidence_interval(model):
-    """Sur 100 seeds, l'IC95 doit contenir le vrai prix ~95 fois (binomiale : > 88)."""
+    """Over 100 seeds, the CI95 must contain the true price ~95 times (binomial: > 88)."""
     ref = float(bs_price(model, 100, 1))
     hits = sum(lo <= ref <= hi for lo, hi in
                (mc_european(model, 100, 1, n_paths=20_000, seed=s).ci95 for s in range(100)))
@@ -96,10 +96,10 @@ def test_pathwise_greeks_legacy(model):
 
 
 # --------------------------------------------------------------------------- #
-# Asiatique
+# Asian
 # --------------------------------------------------------------------------- #
 def _asian_numpy(z, s0, drift, vol, K, sign):
-    """Implémentation de référence lente et lisible."""
+    """Slow, readable reference implementation."""
     log_s = math.log(s0) + np.cumsum(drift + vol * z, axis=1)
     a = np.exp(log_s).mean(axis=1)
     g = np.exp(log_s.mean(axis=1))
@@ -116,7 +116,7 @@ def test_asian_kernel_matches_numpy(sign):
 
 
 def test_asian_kernel_am_gm_inequality():
-    """Inégalité arithmético-géométrique : payoff call arithmétique ≥ géométrique."""
+    """AM-GM inequality: arithmetic call payoff ≥ geometric."""
     z = np.random.default_rng(1).standard_normal((5000, 52))
     a, g = _asian_kernel(z, math.log(100.0), 0.0, 0.03, 100.0, 1.0)
     assert np.all(a >= g - 1e-12)
@@ -132,10 +132,10 @@ def test_asian_cv_consistent_with_plain_mc(model, kind):
 
 
 def test_asian_degenerates_to_european_with_one_date(model):
-    # Sans contrôle : estimateur MC ordinaire
+    # Without control: ordinary MC estimator
     plain = mc_asian_arithmetic(model, 100, 1, n_steps=1, n_paths=200_000, control_variate=False)
     assert_mc_close(plain, bs_price(model, 100, 1))
-    # Avec contrôle : n=1 -> moyenne géométrique = arithmétique, contrôle PARFAIT
+    # With control: n=1 -> geometric mean = arithmetic mean, PERFECT control
     cv = mc_asian_arithmetic(model, 100, 1, n_steps=1, n_paths=200_000)
     assert cv.price == pytest.approx(float(bs_price(model, 100, 1)), abs=1e-10)
     assert cv.std_error < 1e-10
@@ -147,12 +147,12 @@ def test_asian_bounds(model):
 
 
 # --------------------------------------------------------------------------- #
-# Américaine (Longstaff–Schwartz)
+# American (Longstaff–Schwartz)
 # --------------------------------------------------------------------------- #
 def test_lsm_close_to_binomial_tree(model):
     lsm = lsm_american_put(model, 100, 1, n_paths=100_000)
     ref = crr_american(model, 100, 1, "put", n=1000)["price"]
-    assert_mc_close(lsm, ref, atol=0.03)               # atol : biais bas de LSM
+    assert_mc_close(lsm, ref, atol=0.03)               # atol: LSM low bias
 
 
 def test_lsm_respects_no_arbitrage(model):
@@ -165,11 +165,11 @@ def test_lsm_deep_in_the_money_is_intrinsic(model):
 
 
 def test_crr_converges_to_bs_for_american_call_without_dividend(model):
-    """Sans dividende, exercer un call américain tôt n'est jamais optimal."""
+    """Without dividends, exercising an American call early is never optimal."""
     tree = crr_american(model, 100, 1, "call", n=1000)
     assert tree["price"] == pytest.approx(float(bs_price(model, 100, 1)), abs=5e-3)
 
 
 if __name__ == "__main__":
-    # Lancement direct (python fichier.py / bouton ▶ de VS Code) -> on passe par pytest
+    # Direct launch (python file.py / VS Code ▶ button) -> go through pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

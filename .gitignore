@@ -1,20 +1,20 @@
 # =========================================================================== #
-# options_pricing — fichiers à ne pas versionner
+# options_pricing — files to keep out of version control
 # =========================================================================== #
 
-# --- Environnement virtuel ------------------------------------------------- #
+# --- Virtual environment --------------------------------------------------- #
 .venv/
 venv/
 env/
 
-# --- Python : bytecode et caches ------------------------------------------- #
+# --- Python: bytecode and caches ------------------------------------------- #
 __pycache__/
 *.py[cod]
-# Cache Numba (cache=True) : fichiers .nbi / .nbc, normalement dans __pycache__
+# Numba cache (cache=True): .nbi / .nbc files, normally in __pycache__
 *.nbi
 *.nbc
 
-# --- Installation du paquet (pip install -e .) ----------------------------- #
+# --- Package install (pip install -e .) ------------------------------------ #
 *.egg-info/
 build/
 dist/
@@ -27,7 +27,7 @@ dist/
 htmlcov/
 coverage.xml
 
-# --- Sorties générées par les scripts (régénérables) ----------------------- #
+# --- Script outputs (can be regenerated) ----------------------------------- #
 # validate_pricer.py, validate_lsm.py, validate_dividends.py
 rapport_*.csv
 # validate_market.py
@@ -40,15 +40,15 @@ dividendes_*.csv
 chaine_test.csv
 dividendes_test.csv
 
-# --- Éditeurs ------------------------------------------------------------- #
+# --- Editors --------------------------------------------------------------- #
 .vscode/
 .idea/
 
-# --- Systèmes d'exploitation ---------------------------------------------- #
+# --- Operating systems ----------------------------------------------------- #
 Thumbs.db
 desktop.ini
 .DS_Store
 
-# --- Secrets (clés d'API, identifiants de courtier) ------------------------ #
+# --- Secrets (API keys, broker credentials) -------------------------------- #
 .env
 .env.*

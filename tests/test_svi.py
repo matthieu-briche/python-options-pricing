@@ -1,7 +1,7 @@
-"""Tests de svi.py : formule, contrôles d'arbitrage, calage."""
+"""Tests of svi.py: formula, arbitrage checks, fit."""
 import sys
 from pathlib import Path
-# Lancement direct (bouton ▶ de VS Code) : rend importables les modules de la racine du projet
+# Direct launch (VS Code ▶ button): makes the project root modules importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import pytest
@@ -9,14 +9,14 @@ from hypothesis import given, settings, strategies as st
 
 from svi import SVI, calendar_arbitrage, butterfly_arbitrage, calibrate_svi
 
-# Tranche « saine » : skew négatif typique d'un indice actions
+# "Healthy" slice: negative skew typical of an equity index
 SAIN = SVI(a=0.04, b=0.4, rho=-0.4, m=0.0, s=0.1, T=1.0)
-# Exemple d'Axel Vogt (Gatheral & Jacquier, 2014) : arbitrage papillon connu
+# Axel Vogt's example (Gatheral & Jacquier, 2014): known butterfly arbitrage
 VOGT = SVI(a=-0.0410, b=0.1331, rho=0.3060, m=0.3586, s=0.4153, T=1.0)
 
 
 # --------------------------------------------------------------------------- #
-# Formule et dérivées
+# Formula and derivatives
 # --------------------------------------------------------------------------- #
 def test_variance_au_minimum_egale_formule_fermee():
     k = np.linspace(-3, 3, 200_001)
@@ -31,7 +31,7 @@ def test_vol_est_racine_de_w_sur_T():
 
 
 def test_ailes_lineaires_pentes_b_1_plus_ou_moins_rho():
-    """Loin du minimum, w est linéaire de pente b(1+ρ) à droite et -b(1-ρ) à gauche."""
+    """Far from the minimum, w is linear with slope b(1+ρ) on the right and -b(1-ρ) on the left."""
     h = 1e-3
     pente_d = (SAIN.w(50 + h) - SAIN.w(50 - h)) / (2 * h)
     pente_g = (SAIN.w(-50 + h) - SAIN.w(-50 - h)) / (2 * h)
@@ -49,7 +49,7 @@ def test_derivees_analytiques_vs_differences_finies():
 
 
 # --------------------------------------------------------------------------- #
-# Arbitrage papillon (fonction g de Durrleman)
+# Butterfly arbitrage (Durrleman g function)
 # --------------------------------------------------------------------------- #
 def test_papillon_ok_sur_tranche_saine():
     ok, g_min, _ = butterfly_arbitrage(SAIN)
@@ -60,11 +60,11 @@ def test_papillon_detecte_exemple_de_vogt():
     ok, g_min, k_min = butterfly_arbitrage(VOGT)
     assert not ok
     assert g_min < 0
-    assert 0.5 < k_min < 1.2          # violation connue dans l'aile droite
+    assert 0.5 < k_min < 1.2          # known violation in the right wing
 
 
 def test_g_negatif_ssi_densite_negative():
-    """Cohérence de g avec la densité obtenue par différences finies des prix (Breeden-Litzenberger)."""
+    """Consistency of g with the density obtained from finite differences of prices (Breeden-Litzenberger)."""
     from scipy.special import ndtr
     k = np.linspace(-1.0, 1.4, 481)
     F = 1.0
@@ -78,14 +78,14 @@ def test_g_negatif_ssi_densite_negative():
     h = 1e-3
     dens = (call(np.log(K + h)) - 2 * call(k) + call(np.log(K - h))) / h**2
     g = VOGT.g(k)
-    # On écarte les points où g ou la densité sont trop proches de 0 pour trancher
+    # Discard the points where g or the density are too close to 0 to decide
     zone_nette = (np.abs(g) > 1e-3) & (np.abs(dens) > 1e-8)
-    assert (dens[zone_nette] < 0).sum() > 20          # la zone d'arbitrage est bien testée
+    assert (dens[zone_nette] < 0).sum() > 20          # the arbitrage zone is properly tested
     assert ((g < 0) == (dens < 0))[zone_nette].all()
 
 
 # --------------------------------------------------------------------------- #
-# Arbitrage calendaire
+# Calendar arbitrage
 # --------------------------------------------------------------------------- #
 def test_calendaire_aucune_violation_si_variance_croissante():
     s1 = SVI(0.02, 0.2, -0.4, 0.0, 0.1, T=0.25)
@@ -94,7 +94,7 @@ def test_calendaire_aucune_violation_si_variance_croissante():
 
 
 def test_calendaire_detecte_croisement():
-    s1 = SVI(0.06, 0.2, -0.4, 0.0, 0.1, T=0.25)   # plus de variance à échéance courte
+    s1 = SVI(0.06, 0.2, -0.4, 0.0, 0.1, T=0.25)   # more variance at the short expiry
     s2 = SVI(0.03, 0.2, -0.4, 0.0, 0.1, T=1.0)
     v = calendar_arbitrage([s1, s2])
     assert len(v) == 1
@@ -115,7 +115,7 @@ def test_calendaire_plages_disjointes_ignorees():
 
 
 # --------------------------------------------------------------------------- #
-# Calage
+# Fit
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("vrai", [
     SVI(0.010, 0.10, -0.60, 0.02, 0.15, T=0.25),
@@ -125,7 +125,7 @@ def test_calendaire_plages_disjointes_ignorees():
 def test_calage_retrouve_les_vols_d_un_svi_connu(vrai):
     k = np.linspace(-0.4, 0.3, 25)
     cale = calibrate_svi(k, vrai.vol(k), vrai.T)
-    np.testing.assert_allclose(cale.vol(k), vrai.vol(k), atol=5e-4)   # < 0,05 pt de vol
+    np.testing.assert_allclose(cale.vol(k), vrai.vol(k), atol=5e-4)   # < 0.05 vol pt
     assert butterfly_arbitrage(cale)[0]
 
 
@@ -145,7 +145,7 @@ def test_calage_poids_privilegient_les_points_lourds():
     vrai = SVI(0.03, 0.15, -0.4, 0.0, 0.2, T=0.5)
     k = np.linspace(-0.4, 0.3, 15)
     iv = vrai.vol(k).copy()
-    iv[0] += 0.02                                    # point aberrant dans l'aile gauche
+    iv[0] += 0.02                                    # outlier in the left wing
     poids = np.ones_like(k); poids[0] = 1e-3
     cale = calibrate_svi(k, iv, vrai.T, poids=poids)
     assert abs(cale.vol(k[0]) - vrai.vol(k[0])) < 0.005
@@ -158,8 +158,8 @@ def test_calage_reproductible():
 
 
 # --------------------------------------------------------------------------- #
-# Propriété : toute tranche SVI respectant la condition suffisante de
-# Gatheral-Jacquier (b(1+|ρ|) ≤ 4/T et a ≥ 0 « modéré ») n'a pas de variance < 0
+# Property: any SVI slice satisfying the Gatheral-Jacquier sufficient
+# condition (b(1+|ρ|) ≤ 4/T and "moderate" a ≥ 0) has no variance < 0
 # --------------------------------------------------------------------------- #
 @settings(max_examples=200, deadline=None)
 @given(a=st.floats(0.0, 0.1), b=st.floats(0.0, 1.0), rho=st.floats(-0.99, 0.99),
@@ -171,6 +171,6 @@ def test_variance_positive_si_a_positif(a, b, rho, m, s):
 
 
 if __name__ == "__main__":
-    # Lancement direct (python fichier.py / bouton ▶ de VS Code) -> on passe par pytest
+    # Direct launch (python file.py / VS Code ▶ button) -> go through pytest
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))

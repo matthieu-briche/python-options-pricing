@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-"""Tests de dividends.crr_american_div (valeurs de référence QuantLib 1.43, FD 1600x1600)."""
+"""Tests of dividends.crr_american_div (QuantLib 1.43 reference values, FD 1600x1600)."""
 import pytest
 
 from dividends import crr_american_div, american_price_div
@@ -39,11 +39,11 @@ def test_call_decroissant_put_croissant_avec_dividende():
 
 
 def test_exercice_anticipe_avant_gros_dividende():
-    # Call très ITM, dividende de 8 dans 5 jours : on exerce avant le détachement
+    # Deep ITM call, dividend of 8 in 5 days: exercise before the ex-date
     p = crr_american_div(BlackScholes(100, 0.04, 0.15), 50, 0.5, "call", [(5 / 365, 8.0)])["price"]
     assert p == pytest.approx(50.0, abs=0.05)
 
 
 def test_modele_inconnu():
     with pytest.raises(ValueError):
-        crr_american_div(M, 100, 1.0, "put", DIVS, model="autre")
+        crr_american_div(M, 100, 1.0, "put", DIVS, model="other")

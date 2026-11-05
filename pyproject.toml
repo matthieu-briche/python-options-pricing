@@ -20,6 +20,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
-    "slow: tests Monte Carlo lourds (désactiver avec -m 'not slow')",
+    "slow: heavy Monte Carlo tests (disable with -m 'not slow')",
 ]
 filterwarnings = ["error::RuntimeWarning"]

@@ -1,12 +1,12 @@
 """
-Génère une chaîne d'options synthétique réaliste, pricée par QuantLib (moteur
-indépendant de votre pricer), pour tester validate_market.py sans connexion.
+Generates a realistic synthetic option chain, priced by QuantLib (an engine
+independent of your pricer), to test validate_market.py offline.
 
-Paramètres « vrais » connus : taux 4 %, borrow 0,30 %, dividende trimestriel 0,26,
-smile avec skew. Le script de validation doit retrouver le borrow et repricer
-(quasiment) toute la chaîne dans la fourchette.
+Known "true" parameters: rate 4%, borrow 0.30%, quarterly dividend 0.26,
+skewed smile. The validation script must recover the borrow and reprice
+(almost) the whole chain within the spread.
 
-Usage : python make_test_chain.py  ->  chaine_test.csv, dividendes_test.csv
+Usage: python make_test_chain.py  ->  chaine_test.csv, dividendes_test.csv
 """
 import math
 from datetime import date, timedelta
@@ -58,7 +58,7 @@ for j in JOURS:
             if mid < 0.03:
                 continue
             spread = round(max(0.02, 0.012 * mid + 0.03 + 0.04 * abs(math.log(K / S))), 2)
-            m = mid + rng.uniform(-0.3, 0.3) * spread / 2       # bruit de cotation
+            m = mid + rng.uniform(-0.3, 0.3) * spread / 2       # quote noise
             bid, ask = max(round(m - spread / 2, 2), 0.0), round(m + spread / 2, 2)
             lignes.append(dict(expiration=(TODAY + timedelta(days=j)).isoformat(), type=kind,
                                strike=K, bid=bid, ask=ask, volume=int(rng.integers(0, 3000)),
@@ -66,4 +66,4 @@ for j in JOURS:
 
 pd.DataFrame(lignes).to_csv("chaine_test.csv", index=False)
 pd.DataFrame([dict(ex_date=d.isoformat(), montant=D) for d, D in DIVS]).to_csv("dividendes_test.csv", index=False)
-print(f"{len(lignes)} cotations écrites dans chaine_test.csv (spot {S}, date {TODAY})")
+print(f"{len(lignes)} quotes written to chaine_test.csv (spot {S}, date {TODAY})")

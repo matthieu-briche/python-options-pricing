@@ -1,21 +1,21 @@
 """
-svi.py — Paramétrisation SVI du smile de volatilité (Gatheral, 2004).
+svi.py — SVI parametrisation of the volatility smile (Gatheral, 2004).
 
-Variance totale implicite w(k) = σ_impl(k)² · T, en log-moneyness k = ln(K/F) :
+Total implied variance w(k) = σ_impl(k)² · T, in log-moneyness k = ln(K/F):
 
     w(k) = a + b · ( ρ (k − m) + sqrt((k − m)² + s²) )
 
-    a : niveau          b : pente des ailes (≥ 0)      ρ : asymétrie (skew), |ρ| < 1
-    m : translation     s : courbure au minimum (> 0)
+    a : level          b : wing slope (≥ 0)           ρ : asymmetry (skew), |ρ| < 1
+    m : translation    s : curvature at the minimum (> 0)
 
-Avantages sur un polynôme : ailes linéaires en variance (conformes au théorème
-de Roger Lee), extrapolation saine hors des strikes cotés, paramètres
-interprétables, et conditions d'absence d'arbitrage vérifiables.
+Advantages over a polynomial: wings linear in variance (consistent with Roger
+Lee's theorem), sound extrapolation beyond quoted strikes, interpretable
+parameters, and checkable no-arbitrage conditions.
 
-Contrôles d'arbitrage fournis :
-  - papillon (butterfly) : densité risque-neutre positive ⇔ g(k) ≥ 0 (Durrleman)
-  - calendaire : w(k, T) croissante en T à k fixé
-  - borne de Roger Lee sur les ailes : b (1 + |ρ|) ≤ 4 / T  (imposée au calage)
+Arbitrage checks provided:
+  - butterfly: positive risk-neutral density ⇔ g(k) ≥ 0 (Durrleman)
+  - calendar: w(k, T) increasing in T for fixed k
+  - Roger Lee bound on the wings: b (1 + |ρ|) ≤ 4 / T  (enforced in the fit)
 """
 from __future__ import annotations
 
@@ -35,26 +35,26 @@ class SVI:
     T: float
 
     def w(self, k):
-        """Variance totale implicite."""
+        """Total implied variance."""
         k = np.asarray(k, float)
         d = k - self.m
         return self.a + self.b * (self.rho * d + np.sqrt(d * d + self.s * self.s))
 
     def vol(self, k):
-        """Volatilité implicite (annualisée)."""
+        """Implied volatility (annualised)."""
         return np.sqrt(np.maximum(self.w(k), 1e-12) / self.T)
 
     def __call__(self, k):
         return self.vol(k)
 
-    # Dérivées analytiques de w en k
+    # Analytical derivatives of w with respect to k
     def _dw(self, k):
         d = np.asarray(k, float) - self.m
         r = np.sqrt(d * d + self.s * self.s)
         return self.b * (self.rho + d / r), self.b * self.s * self.s / r ** 3
 
     def g(self, k):
-        """Fonction de Durrleman : la densité est positive ssi g(k) >= 0."""
+        """Durrleman function: the density is positive iff g(k) >= 0."""
         k = np.asarray(k, float)
         w = np.maximum(self.w(k), 1e-12)
         w1, w2 = self._dw(k)
@@ -66,18 +66,18 @@ class SVI:
 
 def calibrate_svi(k, iv, T, poids=None, n_essais=8, seed=0) -> SVI:
     """
-    Calage par moindres carrés pondérés sur la vol implicite, avec contraintes :
-    b >= 0, |ρ| < 1, s > 0, variance minimale >= 0, b(1+|ρ|) <= 4/T (Roger Lee).
-    Absence d'arbitrage papillon imposée par pénalité sur g(k) < 0, sur une grille
-    k ∈ [-1.5, 1.5] qui couvre les ailes extrapolées (là où les données ne
-    contraignent rien et où un calage libre dégénère facilement).
-    Plusieurs points de départ : le problème n'est pas convexe.
+    Weighted least-squares fit on implied vol, with constraints:
+    b >= 0, |ρ| < 1, s > 0, minimum variance >= 0, b(1+|ρ|) <= 4/T (Roger Lee).
+    No butterfly arbitrage, enforced by a penalty on g(k) < 0, on a grid
+    k ∈ [-1.5, 1.5] covering the extrapolated wings (where the data constrain
+    nothing and a free fit easily degenerates).
+    Several starting points: the problem is not convex.
     """
     k, iv = np.asarray(k, float), np.asarray(iv, float)
     poids = np.ones_like(k) if poids is None else np.asarray(poids, float)
     poids = poids / poids.mean()
     w_mkt = iv ** 2 * T
-    b_max = 4.0 / T / 1.0  # resserré ensuite via la pénalité Roger Lee
+    b_max = 4.0 / T / 1.0  # tightened afterwards through the Roger Lee penalty
     kmin, kmax = k.min(), k.max()
     rng = np.random.default_rng(seed)
     k_grille = np.linspace(-1.5, 1.5, 61)
@@ -86,10 +86,10 @@ def calibrate_svi(k, iv, T, poids=None, n_essais=8, seed=0) -> SVI:
         a, b, rho, m, s = p
         modele = SVI(a, b, rho, m, s, T)
         res = poids * (modele.vol(k) - iv)
-        # pénalités douces : variance minimale >= 0 et borne de Roger Lee
+        # soft penalties: minimum variance >= 0 and Roger Lee bound
         pen_min = 10.0 * min(modele.min_variance(), 0.0)
         pen_lee = 10.0 * max(b * (1 + abs(rho)) - 4.0 / T, 0.0)
-        # marge de 1e-3 : la contrainte doit tenir strictement, pas « à peu près »
+        # 1e-3 margin: the constraint must hold strictly, not "roughly"
         pen_papillon = 100.0 * np.minimum(modele.g(k_grille) - 1e-3, 0.0)
         return np.concatenate([res, [pen_min, pen_lee], pen_papillon])
 
@@ -113,7 +113,7 @@ def calibrate_svi(k, iv, T, poids=None, n_essais=8, seed=0) -> SVI:
 
 
 def butterfly_arbitrage(svi: SVI, k_min=-1.5, k_max=1.5, n=601):
-    """Renvoie (ok, g_min, k où g est minimal)."""
+    """Returns (ok, g_min, k where g is minimal)."""
     k = np.linspace(k_min, k_max, n)
     g = svi.g(k)
     i = int(np.argmin(g))
@@ -122,11 +122,11 @@ def butterfly_arbitrage(svi: SVI, k_min=-1.5, k_max=1.5, n=601):
 
 def calendar_arbitrage(svis: list[SVI], k_min=-0.5, k_max=0.5, n=201, plages=None):
     """
-    Variance totale croissante en maturité à k fixé. Renvoie la liste des
-    couples d'échéances en violation (T1, T2, k, w1 - w2 maximal).
-    plages : liste optionnelle de (k_min, k_max) cotés par échéance (même ordre que
-    svis) ; si fournie, chaque paire n'est testée que sur l'intersection de ses
-    deux plages cotées.
+    Total variance increasing in maturity for fixed k. Returns the list of
+    expiry pairs in violation (T1, T2, k, maximal w1 - w2).
+    plages: optional list of quoted (k_min, k_max) per expiry (same order as
+    svis); if provided, each pair is only tested on the intersection of its
+    two quoted ranges.
     """
     ordre = sorted(range(len(svis)), key=lambda i: svis[i].T)
     violations = []

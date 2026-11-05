@@ -1,7 +1,7 @@
-"""Grecques Monte Carlo (pathwise, LR, contrôle), différences finies CRN, arbre CRR."""
+"""Monte Carlo Greeks (pathwise, LR, control), CRN finite differences, CRR tree."""
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # pour "from conftest import"
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for "from conftest import"
 
 import math
 from dataclasses import replace
@@ -17,7 +17,7 @@ from pricer import _asian_kernel, bs_price, lsm_american_put, mc_asian_arithmeti
 
 
 # --------------------------------------------------------------------------- #
-# Européenne : chaque Grecque MC contre la formule fermée
+# European: each MC Greek against the closed form
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="module", params=[("call", 100.0, 1.0), ("put", 100.0, 1.0),
                                         ("call", 120.0, 0.5), ("put", 85.0, 2.0)],
@@ -42,8 +42,8 @@ def test_mc_european_greeks_reproducible(model):
 
 
 def test_mc_european_gamma_identical_call_put(model):
-    """Même seed -> mêmes Z : le Gamma LR d'un call et d'un put ne doivent différer
-    que par du bruit, et rester dans l'IC de la valeur exacte commune."""
+    """Same seed -> same Z: the LR Gamma of a call and a put must differ
+    only by noise, and stay within the CI of the common exact value."""
     c = mc_european_greeks(model, 100, 1, "call", n_paths=500_000)
     p = mc_european_greeks(model, 100, 1, "put", n_paths=500_000)
     ref = bs_greeks(model, 100, 1)["gamma"]
@@ -52,7 +52,7 @@ def test_mc_european_gamma_identical_call_put(model):
 
 
 # --------------------------------------------------------------------------- #
-# Asiatique : noyau Numba
+# Asian: Numba kernel
 # --------------------------------------------------------------------------- #
 def _kernel_args(m, K, T, n, sign=1.0):
     dt = T / n
@@ -73,15 +73,15 @@ def test_asian_greeks_kernel_prices_match_price_kernel(model_div, sign):
 
 
 def test_asian_greeks_kernel_pathwise_delta_matches_bump(model):
-    """Sur chaque trajectoire où le payoff est dérivable, le delta pathwise
-    doit être la dérivée exacte du payoff actualisé par rapport à S0."""
+    """On each path where the payoff is differentiable, the pathwise delta
+    must be the exact derivative of the discounted payoff with respect to S0."""
     n, T, h = 12, 1.0, 1e-5
     z = np.random.default_rng(2).standard_normal((2000, n))
     base = _asian_greeks_kernel(z, *_kernel_args(model, 100, T, n))
     up = _asian_greeks_kernel(z, *_kernel_args(replace(model, s0=100 + h), 100, T, n))
     dn = _asian_greeks_kernel(z, *_kernel_args(replace(model, s0=100 - h), 100, T, n))
     bump = (up[0] - dn[0]) / (2 * h)
-    smooth = np.abs(up[0] - dn[0]) > 0          # exclut les trajectoires hors monnaie
+    smooth = np.abs(up[0] - dn[0]) > 0          # excludes out-of-the-money paths
     np.testing.assert_allclose(base[1][smooth], bump[smooth], rtol=1e-4, atol=1e-6)
 
 
@@ -97,7 +97,7 @@ def test_asian_greeks_kernel_pathwise_vega_matches_bump(model):
 
 
 def test_asian_geometric_estimators_unbiased(model_div):
-    """Lignes géométriques du noyau : moyenne MC ≈ Grecques exactes géométriques."""
+    """Geometric rows of the kernel: MC mean ≈ exact geometric Greeks."""
     m, n, T, K = model_div, 12, 1.0, 100.0
     z = np.random.default_rng(4).standard_normal((400_000, n))
     out = _asian_greeks_kernel(z, *_kernel_args(m, K, T, n))
@@ -109,7 +109,7 @@ def test_asian_geometric_estimators_unbiased(model_div):
 
 
 # --------------------------------------------------------------------------- #
-# Asiatique : estimateur complet
+# Asian: full estimator
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("kind", ["call", "put"])
 def test_mc_asian_greeks_one_date_equals_bs(model, kind):
@@ -133,17 +133,17 @@ def test_mc_asian_greeks_vs_crn_finite_differences(model):
     est = mc_asian_greeks(model, 100, 1, 12, n_paths=300_000)
     pricer = lambda mm, TT: mc_asian_arithmetic(mm, 100, TT, 12, n_paths=300_000, seed=9).price
     ref = fd_greeks_crn(pricer, model, 1.0)
-    # La référence FD est elle-même bruitée et biaisée (bump fini) -> tolérance relative
+    # The FD reference is itself noisy and biased (finite bump) -> relative tolerance
     for g in est:
         assert est[g].price == pytest.approx(ref[g], rel=0.02, abs=2e-3), g
 
 
 # --------------------------------------------------------------------------- #
-# Différences finies CRN
+# CRN finite differences
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("kind", ["call", "put"])
 def test_fd_crn_on_closed_form(model_div, kind):
-    """Sur un pricer déterministe, les DF centrées doivent retrouver les Grecques."""
+    """On a deterministic pricer, central FDs must recover the Greeks."""
     pricer = lambda mm, T: float(bs_price(mm, 100, T, kind))
     fd = fd_greeks_crn(pricer, model_div, 1.0, rel_ds=1e-3, d_sigma=1e-4, d_r=1e-5, d_t=1e-4)
     ref = bs_greeks(model_div, 100, 1.0, kind)
@@ -152,8 +152,8 @@ def test_fd_crn_on_closed_form(model_div, kind):
 
 
 def test_crn_is_essential(model):
-    """Avec des seeds différentes, le Gamma par DF explose : on vérifie que le CRN
-    réduit l'erreur d'au moins un ordre de grandeur."""
+    """With different seeds, the FD Gamma blows up: check that CRN
+    reduces the error by at least an order of magnitude."""
     ref = bs_greeks(model, 100, 1)["gamma"]
     from pricer import mc_european
     crn = lambda mm, T: mc_european(mm, 100, T, n_paths=200_000, seed=1).price
@@ -165,7 +165,7 @@ def test_crn_is_essential(model):
 
 
 # --------------------------------------------------------------------------- #
-# Américaine
+# American
 # --------------------------------------------------------------------------- #
 def test_crr_american_call_no_dividend_equals_bs_greeks(model):
     tree = crr_american(model, 100, 1, "call", n=1000)
@@ -178,7 +178,7 @@ def test_crr_american_call_no_dividend_equals_bs_greeks(model):
 def test_crr_american_put_properties(model):
     am = crr_american(model, 100, 1, "put", n=1000)
     eu = bs_greeks(model, 100, 1, "put")
-    assert am["price"] > eu["price"]                    # prime d'exercice anticipé
+    assert am["price"] > eu["price"]                    # early exercise premium
     assert -1 < am["delta"] < 0 and am["gamma"] > 0 and am["vega"] > 0 and am["rho"] < 0
 
 
@@ -199,5 +199,5 @@ def test_lsm_greeks_vs_tree(model):
 
 
 if __name__ == "__main__":
-    # Lancement direct (python fichier.py / bouton ▶ de VS Code) -> on passe par pytest
+    # Direct launch (python file.py / VS Code ▶ button) -> go through pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
